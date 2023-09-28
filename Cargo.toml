@@ -1,5 +1,5 @@
 [package]
-name = "atlas-replica"
+name = "atlas-smr-replica"
 version = "0.1.0"
 description = "The replica of the Atlas SMR project."
 authors = ["Nuno Neto <nuno.martingo@fc.up.pt>"]
@@ -14,8 +14,8 @@ readme = "README.md"
 [features]
 
 serialize_serde = ["atlas-core/serialize_serde", "atlas-communication/serialize_serde",
-    "atlas-execution/serialize_serde", "atlas-common/serialize_serde", "atlas-persistent-log/serialize_serde", "atlas-reconfiguration/serialize_serde"]
-serialize_capnp = ["atlas-core/serialize_capnp", "atlas-execution/serialize_capnp",
+    "atlas-smr-application/serialize_serde", "atlas-common/serialize_serde", "atlas-persistent-log/serialize_serde", "atlas-reconfiguration/serialize_serde"]
+serialize_capnp = ["atlas-core/serialize_capnp", "atlas-smr-application/serialize_capnp",
     "atlas-communication/serialize_capnp", "atlas-persistent-log/serialize_capnp"]
 
 default = ["serialize_serde"]
@@ -23,12 +23,12 @@ default = ["serialize_serde"]
 [dependencies]
 log = "0.4.17"
 chrono = "0.4.23"
-atlas-communication = { path = "../atlas-communication" }
-atlas-execution = { path = "../atlas-smr-application" }
-atlas-common = { path = "../atlas-common" }
-atlas-core = { path = "../atlas-core" }
-atlas-metrics = { path = "../atlas-metrics" }
-atlas-persistent-log = { path = "../atlas-persistent-log" }
-atlas-reconfiguration = { path = "../atlas-reconfiguration" }
-atlas-smr-exec = { path = "../atlas-smr-exec" }
+atlas-communication = { path = "../Atlas-Communication" }
+atlas-smr-application = { path = "../Atlas-SMR-Application" }
+atlas-common = { path = "../Atlas-Common" }
+atlas-core = { path = "../Atlas-Core" }
+atlas-metrics = { path = "../Atlas-Metrics" }
+atlas-persistent-log = { path = "../Atlas-Persistent-Log" }
+atlas-reconfiguration = { path = "../Atlas-Reconfiguration" }
+atlas-smr-execution = { path = "../Atlas-SMR-Execution" }
 futures-timer = "3.0.2"
