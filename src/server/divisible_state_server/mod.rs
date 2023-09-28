@@ -13,10 +13,10 @@ use atlas_core::persistent_log::{DivisibleStateLog, PersistableOrderProtocol, Pe
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_core::smr::networking::SMRNetworkNode;
 use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
-use atlas_execution::app::Application;
-use atlas_execution::state::divisible_state::{AppStateMessage, DivisibleState, InstallStateMessage};
+use atlas_smr_application::app::Application;
+use atlas_smr_application::state::divisible_state::{AppStateMessage, DivisibleState, InstallStateMessage};
 use atlas_metrics::metrics::metric_duration;
-use atlas_smr_exec::TDivisibleStateExecutor;
+use atlas_smr_execution::TDivisibleStateExecutor;
 
 use crate::config::DivisibleStateReplicaConfig;
 use crate::metric::RUN_LATENCY_TIME_ID;
@@ -107,7 +107,7 @@ impl<RP, SE, S, A, OP, ST, LT, NT, PL> DivStReplica<RP, SE, S, A, OP, ST, LT, NT
 
             let current_view = self.inner_replica.ordering_protocol.view();
 
-            self.state_transfer_protocol.handle_state_received_from_app(current_view, descriptor, state_parts)?;
+            self.state_transfer_protocol.handle_state_desc_received_from_app(current_view, descriptor, state_parts)?;
 
             self.inner_replica.ordering_protocol.checkpointed(seq_no)?;
         }
