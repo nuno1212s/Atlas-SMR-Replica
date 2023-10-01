@@ -1,4 +1,4 @@
-//! Contains the server side core protocol logic of `febft`.
+//! Contains the server side core protocol logic of `Atlas`.
 
 use std::fmt::{Debug, Formatter, write};
 use std::marker::PhantomData;
@@ -33,8 +33,8 @@ use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::smr::networking::SMRNetworkNode;
 use atlas_core::state_transfer::{StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
-use atlas_execution::ExecutorHandle;
-use atlas_execution::serialize::ApplicationData;
+use atlas_smr_application::ExecutorHandle;
+use atlas_smr_application::serialize::ApplicationData;
 use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_persistent_log::NoPersistentLog;
 
