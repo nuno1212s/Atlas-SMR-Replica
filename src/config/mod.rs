@@ -4,65 +4,69 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::FullNetworkNode;
 use atlas_core::log_transfer::LogTransferProtocol;
+use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::OrderingProtocol;
-use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::{DivisibleStateLog, MonolithicStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_core::serialize::{Service};
+use atlas_core::smr::smr_decision_log::DecisionLog;
 use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
 use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_core::state_transfer::StateTransferProtocol;
-use atlas_execution::app::Application;
-use atlas_execution::serialize::ApplicationData;
-use atlas_execution::state::divisible_state::DivisibleState;
-use atlas_execution::state::monolithic_state::MonolithicState;
+use atlas_smr_application::app::Application;
+use atlas_smr_application::serialize::ApplicationData;
+use atlas_smr_application::state::divisible_state::DivisibleState;
+use atlas_smr_application::state::monolithic_state::MonolithicState;
 
 use crate::persistent_log::SMRPersistentLog;
 
-pub struct MonolithicStateReplicaConfig<RF, S, A, OP, ST, LT, NT, PL>
+pub struct MonolithicStateReplicaConfig<RF, S, A, OP, DL, ST, LT, NT, PL>
     where RF: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + 'static,
-          OP: StatefulOrderProtocol<A::AppData, NT, PL> + 'static + PersistableOrderProtocol<A::AppData, OP::Serialization, OP::StateSerialization>,
+          OP: LoggableOrderProtocol<A::AppData, NT> + 'static + PersistableOrderProtocol<A::AppData, OP::Serialization, OP::StateSerialization>,
+          DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
           ST: MonolithicStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
-          LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
+          LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
           NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>>,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + MonolithicStateLog<S> {
     /// The application logic.
     pub service: A,
 
-    pub replica_config: ReplicaConfig<RF, S, A::AppData, OP, ST, LT, NT, PL>,
+    pub replica_config: ReplicaConfig<RF, S, A::AppData, OP, DL, ST, LT, NT, PL>,
 
     /// The configuration for the State transfer protocol
     pub st_config: ST::Config,
 }
 
-pub struct DivisibleStateReplicaConfig<RF, S, A, OP, ST, LT, NT, PL>
+pub struct DivisibleStateReplicaConfig<RF, S, A, OP, DL, ST, LT, NT, PL>
     where
         RF: ReconfigurationProtocol + 'static,
         S: DivisibleState + 'static,
         A: Application<S> + 'static,
-        OP: StatefulOrderProtocol<A::AppData, NT, PL> + 'static + PersistableOrderProtocol<A::AppData, OP::Serialization, OP::StateSerialization>,
+        OP: LoggableOrderProtocol<A::AppData, NT> + 'static + PersistableOrderProtocol<A::AppData, OP::Serialization, OP::StateSerialization>,
+        DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
         ST: DivisibleStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
-        LT: LogTransferProtocol<A::AppData, OP, NT, PL> + 'static,
+        LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
         NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>>,
         PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + DivisibleStateLog<S> {
     /// The application logic.
     pub service: A,
 
-    pub replica_config: ReplicaConfig<RF, S, A::AppData, OP, ST, LT, NT, PL>,
+    pub replica_config: ReplicaConfig<RF, S, A::AppData, OP, DL, ST, LT, NT, PL>,
 
     /// The configuration for the State transfer protocol
     pub st_config: ST::Config,
 }
 
 /// Represents a configuration used to bootstrap a `Replica`.
-pub struct ReplicaConfig<RF, S, D, OP, ST, LT, NT, PL> where
+pub struct ReplicaConfig<RF, S, D, OP, DL, ST, LT, NT, PL> where
     RF: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
-    OP: StatefulOrderProtocol<D, NT, PL> + 'static + PersistableOrderProtocol<D, OP::Serialization, OP::StateSerialization>,
+    OP: LoggableOrderProtocol<D, NT> + 'static + PersistableOrderProtocol<D, OP::Serialization, OP::StateSerialization>,
     ST: StateTransferProtocol<S, NT, PL> + 'static,
-    LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
+    DL: DecisionLog<D, OP, NT, PL> + 'static,
+    LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
     NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<D, OP::Serialization, ST::Serialization, LT::Serialization>>,
     PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> {
     /// ID of the Node in question
@@ -86,6 +90,9 @@ pub struct ReplicaConfig<RF, S, D, OP, ST, LT, NT, PL> where
 
     /// The configuration for the ordering protocol
     pub op_config: OP::Config,
+
+    /// The configuration for the decision log protocol
+    pub dl_config: DL::Config,
 
     /// The configuration for the log transfer protocol
     pub lt_config: LT::Config,

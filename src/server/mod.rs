@@ -18,8 +18,9 @@ use atlas_communication::NetworkNode;
 use atlas_core::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult};
 use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
-use atlas_core::ordering_protocol::{ExecutionResult, OrderingProtocolArgs, ProtocolConsensusDecision};
-use atlas_core::ordering_protocol::networking::serialize::OrderProtocolLog;
+use atlas_core::ordering_protocol::{ExecutionResult, OPExecResult, OPPollResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
+use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, OrderProtocolLog};
 use atlas_core::ordering_protocol::OrderProtocolExecResult;
 use atlas_core::ordering_protocol::OrderProtocolPoll;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::{ReconfigurableOrderProtocol, ReconfigurationAttemptResult};
@@ -30,7 +31,9 @@ use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::{AlterationFailReason, QuorumAlterationResponse, QuorumAttemptJoinResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
+use atlas_core::smr::networking::serialize::OrderProtocolLog;
 use atlas_core::smr::networking::SMRNetworkNode;
+use atlas_core::smr::smr_decision_log::DecisionLog;
 use atlas_core::state_transfer::{StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
 use atlas_smr_application::ExecutorHandle;
@@ -66,18 +69,22 @@ pub(crate) enum ReplicaPhase<R> {
     },
 }
 
-pub struct Replica<RP, S, D, OP, ST, LT, NT, PL> where D: ApplicationData + 'static,
-                                                       OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<D, OP::Serialization, OP::StateSerialization> + 'static,
-                                                       LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
-                                                       ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
-                                                       PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + 'static,
-                                                       RP: ReconfigurationProtocol + 'static {
+pub struct Replica<RP, S, D, OP, DL, ST, LT, NT, PL> where D: ApplicationData + 'static,
+                                                           OP: LoggableOrderProtocol<D, NT> + PersistableOrderProtocol<D, OP::Serialization, OP::PersistableTypes> + 'static,
+                                                           DL: DecisionLog<D, OP, NT, PL> + 'static,
+                                                           LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
+                                                           ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
+                                                           PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + 'static,
+                                                           RP: ReconfigurationProtocol + 'static {
     replica_phase: ReplicaPhase<D::Request>,
 
     quorum_reconfig_data: QuorumReconfig,
 
     // The ordering protocol, responsible for ordering requests
     ordering_protocol: OP,
+    // The decision log protocol, responsible for keeping track of all of the
+    // order protocol decisions that have been made
+    decision_log: DL,
     log_transfer_protocol: LT,
     rq_pre_processor: RequestPreProcessor<D::Request>,
     timeouts: Timeouts,
@@ -107,16 +114,17 @@ pub struct QuorumReconfig {
     node_pending_join: Option<NodeId>,
 }
 
-impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
+impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
     where
         RP: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
-        OP: StatefulOrderProtocol<D, NT, PL> + PersistableOrderProtocol<D, OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
-        LT: LogTransferProtocol<D, OP, NT, PL> + 'static,
+        OP: LoggableOrderProtocol<D, NT> + PersistableOrderProtocol<D, OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
+        DL: DecisionLog<D, OP, NT, PL> + 'static,
+        LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
         ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
         NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization> + 'static,
         PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + 'static, {
-    async fn bootstrap(cfg: ReplicaConfig<RP, S, D, OP, ST, LT, NT, PL>, executor: ExecutorHandle<D>) -> Result<Self> {
+    async fn bootstrap(cfg: ReplicaConfig<RP, S, D, OP, DL, ST, LT, NT, PL>, executor: ExecutorHandle<D>) -> Result<Self> {
         let ReplicaConfig {
             id: log_node_id,
             n,
@@ -126,6 +134,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
             db_path,
             op_config,
             lt_config,
+            dl_config,
             pl_config,
             node: node_config,
             reconfig_node, p,
@@ -191,7 +200,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         let op_args = OrderingProtocolArgs(executor.clone(), timeouts.clone(),
                                            rq_pre_processor.clone(),
                                            batch_input, node.clone(),
-                                           persistent_log.clone(), quorum);
+                                           quorum);
 
         let ordering_protocol = if let Some((view, log)) = log {
             // Initialize the ordering protocol
@@ -199,6 +208,8 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
         } else {
             OP::initialize(op_config, op_args)?
         };
+
+        let decision_log = DL::initialize_decision_log(dl_config, persistent_log.clone())?;
 
         let log_transfer_protocol = LT::initialize(lt_config, timeouts.clone(), node.clone(), persistent_log.clone())?;
 
@@ -216,6 +227,7 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
             replica_phase: state_transfer,
             quorum_reconfig_data: QuorumReconfig { node_pending_join: None },
             ordering_protocol,
+            decision_log,
             log_transfer_protocol,
             rq_pre_processor,
             timeouts,
@@ -255,10 +267,11 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                 trace!("{:?} // Polling ordering protocol with result {:?}", NetworkNode::id(&*self.node), poll_res);
 
                 match poll_res {
-                    OrderProtocolPoll::RePoll => {
-//Continue
+                    OPPollResult::RePoll => {}
+                    OPPollResult::RunCst => {
+                        self.run_all_state_transfer(state_transfer)?;
                     }
-                    OrderProtocolPoll::ReceiveFromReplicas => {
+                    OPPollResult::ReceiveMsg => {
                         let start = Instant::now();
 
                         let network_message = self.node.node_incoming_rq_handling().receive_from_replicas(Some(REPLICA_WAIT_TIME)).unwrap();
@@ -274,22 +287,35 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                 SystemMessage::ProtocolMessage(protocol) => {
                                     let start = Instant::now();
 
-                                    match self.ordering_protocol.process_message(StoredMessage::new(header, protocol))? {
-                                        OrderProtocolExecResult::Success => {
-//Continue execution
-                                        }
-                                        OrderProtocolExecResult::RunCst => {
-                                            self.run_all_state_transfer(state_transfer)?;
-                                        }
-                                        OrderProtocolExecResult::Decided(decisions) => {
-                                            self.execute_decisions(state_transfer, decisions)?;
-                                        }
-                                        OrderProtocolExecResult::QuorumJoined(decision, node_id, current_quorum) => {
-                                            if let Some(decision) = decision {
-                                                self.execute_decisions(state_transfer, decision)?;
+                                    let message = StoredMessage::new(header, protocol.into_inner());
+
+                                    match self.ordering_protocol.process_message(message)? {
+                                        OPExecResult::MessageDropped | OPExecResult::MessageQueued => {}
+                                        OPExecResult::ProgressedDecision(decision) => {
+                                            for decision_information in decision.into_iter() {
+                                                self.decision_log.decision_information_received(decision_information)?;
                                             }
 
-                                            self.handle_quorum_joined(node_id, current_quorum, state_transfer)?;
+                                            //TODO: How will we handle the execution of the requests?
+                                        }
+                                        OPExecResult::Decided(decision) => {
+                                            for decision_information in decision.into_iter() {
+                                                self.decision_log.decision_information_received(decision_information)?;
+                                            }
+                                        }
+                                        OPExecResult::QuorumJoined(decision, quorum) => {
+                                            let (node_id, quorum) = quorum.into_inner();
+
+                                            if let Some(decision) = decision {
+                                                for decision in decision.into_iter() {
+                                                    self.decision_log.decision_information_received(decision)?;
+                                                }
+                                            }
+
+                                            self.handle_quorum_joined(node_id, quorum, state_transfer)?;
+                                        }
+                                        OPExecResult::RunCst => {
+                                            self.run_all_state_transfer(state_transfer)?;
                                         }
                                     }
                                 }
@@ -301,22 +327,40 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                     self.rq_pre_processor.send(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
                                 }
                                 SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
-                                    match self.ordering_protocol.process_message(fwd_protocol.into_inner())? {
-                                        OrderProtocolExecResult::Success => {
-//Continue execution
-                                        }
-                                        OrderProtocolExecResult::RunCst => {
-                                            self.run_all_state_transfer(state_transfer)?;
-                                        }
-                                        OrderProtocolExecResult::Decided(decisions) => {
-                                            self.execute_decisions(state_transfer, decisions)?;
-                                        }
-                                        OrderProtocolExecResult::QuorumJoined(decision, node_id, current_quorum) => {
-                                            if let Some(decision) = decision {
-                                                self.execute_decisions(state_transfer, decision)?;
+
+                                    let message = fwd_protocol.into_inner();
+
+                                    let (header, message) = message.into_inner();
+
+                                    let message = StoredMessage::new(header, message.into_inner());
+
+                                    match self.ordering_protocol.process_message(message)? {
+                                        OPExecResult::MessageDropped | OPExecResult::MessageQueued => {}
+                                        OPExecResult::ProgressedDecision(decision) => {
+                                            for decision_information in decision.into_iter() {
+                                                self.decision_log.decision_information_received(decision_information)?;
                                             }
 
-                                            self.handle_quorum_joined(node_id, current_quorum, state_transfer)?;
+                                            //TODO: How will we handle the execution of the requests?
+                                        }
+                                        OPExecResult::Decided(decision) => {
+                                            for decision_information in decision.into_iter() {
+                                                self.decision_log.decision_information_received(decision_information)?;
+                                            }
+                                        }
+                                        OPExecResult::QuorumJoined(decision, quorum) => {
+                                            let (node_id, quorum) = quorum.into_inner();
+
+                                            if let Some(decision) = decision {
+                                                for decision in decision.into_iter() {
+                                                    self.decision_log.decision_information_received(decision)?;
+                                                }
+                                            }
+
+                                            self.handle_quorum_joined(node_id, quorum, state_transfer)?;
+                                        }
+                                        OPExecResult::RunCst => {
+                                            self.run_all_state_transfer(state_transfer)?;
                                         }
                                     }
                                 }
@@ -335,42 +379,57 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                         metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
                         metric_increment(REPLICA_ORDERED_RQS_PROCESSED_ID, Some(1));
                     }
-                    OrderProtocolPoll::Exec(message) => {
+                    OPPollResult::Exec(message) => {
                         let start = Instant::now();
 
                         match self.ordering_protocol.process_message(message)? {
-                            OrderProtocolExecResult::Success => {
-                                // Continue execution
-                            }
-                            OrderProtocolExecResult::RunCst => {
-                                self.run_all_state_transfer(state_transfer)?;
-                            }
-                            OrderProtocolExecResult::Decided(decided) => {
-                                self.execute_decisions(state_transfer, decided)?;
-                            }
-                            OrderProtocolExecResult::QuorumJoined(decision, node_id, current_quorum) => {
-                                if let Some(decision) = decision {
-                                    self.execute_decisions(state_transfer, decision)?;
+                            OPExecResult::MessageDropped | OPExecResult::MessageQueued => {}
+                            OPExecResult::ProgressedDecision(decision) => {
+                                for decision_information in decision.into_iter() {
+                                    self.decision_log.decision_information_received(decision_information)?;
                                 }
 
-                                self.handle_quorum_joined(node_id, current_quorum, state_transfer)?;
+                                //TODO: How will we handle the execution of the requests?
+                            }
+                            OPExecResult::Decided(decision) => {
+                                for decision_information in decision.into_iter() {
+                                    self.decision_log.decision_information_received(decision_information)?;
+                                }
+                            }
+                            OPExecResult::QuorumJoined(decision, quorum) => {
+                                let (node_id, quorum) = quorum.into_inner();
+
+                                if let Some(decision) = decision {
+                                    for decision in decision.into_iter() {
+                                        self.decision_log.decision_information_received(decision)?;
+                                    }
+                                }
+
+                                self.handle_quorum_joined(node_id, quorum, state_transfer)?;
+                            }
+                            OPExecResult::RunCst => {
+                                self.run_all_state_transfer(state_transfer)?;
                             }
                         }
+
                         metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
                         metric_increment(REPLICA_ORDERED_RQS_PROCESSED_ID, Some(1));
                     }
-                    OrderProtocolPoll::RunCst => {
-                        self.run_all_state_transfer(state_transfer)?;
+                    OPPollResult::Decided(decision) => {
+                        for decision_information in decision.into_iter() {
+                            self.decision_log.decision_information_received(decision_information)?;
+                        }
                     }
-                    OrderProtocolPoll::Decided(decisions) => {
-                        self.execute_decisions(state_transfer, decisions)?;
-                    }
-                    OrderProtocolPoll::QuorumJoined(decision, node_id, current_quorum) => {
+                    OPPollResult::QuorumJoined(decision, join_info) => {
+                        let (node_id, quorum) = join_info.into_inner();
+
                         if let Some(decision) = decision {
-                            self.execute_decisions(state_transfer, decision)?;
+                            for decision in decision.into_iter() {
+                                self.decision_log.decision_information_received(decision)?;
+                            }
                         }
 
-                        self.handle_quorum_joined(node_id, current_quorum, state_transfer)?;
+                        self.handle_quorum_joined(node_id, quorum, state_transfer)?;
                     }
                 }
             }
@@ -414,7 +473,9 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                         SystemMessage::LogTransferMessage(log_transfer) => {
                             let start = Instant::now();
 
-                            let result = self.log_transfer_protocol.process_message(&mut self.ordering_protocol, StoredMessage::new(header, log_transfer))?;
+                            let message = StoredMessage::new(header, log_transfer.into_inner());
+
+                            let result = self.log_transfer_protocol.process_message(&mut self.decision_log, message)?;
 
                             match result {
                                 LTResult::RunLTP => {
@@ -422,12 +483,12 @@ impl<RP, S, D, OP, ST, LT, NT, PL> Replica<RP, S, D, OP, ST, LT, NT, PL>
                                 }
                                 LTResult::Running => {}
                                 LTResult::NotNeeded => {
-                                    let log = self.ordering_protocol.current_log()?;
+                                    let log = self.decision_log.current_log()?;
 
                                     self.log_transfer_protocol_done(state_transfer, log.first_seq().unwrap_or(SeqNo::ZERO), log.sequence_number(), Vec::new())?;
                                 }
                                 LTResult::LTPFinished(first_seq, last_seq, requests_to_execute) => {
-                                    info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", NetworkNode::id(&*self.node));
+                                    info!("{:?} // Log transfer finished. Installed log into decision log and received requests", NetworkNode::id(&*self.node));
                                     self.log_transfer_protocol_done(state_transfer, first_seq, last_seq, requests_to_execute)?;
                                 }
                             }
