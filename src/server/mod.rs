@@ -10,6 +10,7 @@ use log::{debug, error, info, trace, warn};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
+use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
@@ -20,20 +21,16 @@ use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
 use atlas_core::ordering_protocol::{ExecutionResult, OPExecResult, OPPollResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
-use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, OrderProtocolLog};
-use atlas_core::ordering_protocol::OrderProtocolExecResult;
-use atlas_core::ordering_protocol::OrderProtocolPoll;
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage};
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::{ReconfigurableOrderProtocol, ReconfigurationAttemptResult};
-use atlas_core::ordering_protocol::stateful_order_protocol::StatefulOrderProtocol;
 use atlas_core::persistent_log::OperationMode;
-use atlas_core::persistent_log::PersistableOrderProtocol;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::{AlterationFailReason, QuorumAlterationResponse, QuorumAttemptJoinResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::request_pre_processing::{initialize_request_pre_processor, PreProcessorMessage, RequestPreProcessor};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::smr::networking::serialize::OrderProtocolLog;
 use atlas_core::smr::networking::SMRNetworkNode;
-use atlas_core::smr::smr_decision_log::DecisionLog;
+use atlas_core::smr::smr_decision_log::{DecisionLog, LoggedDecision, LoggedDecisionValue};
 use atlas_core::state_transfer::{StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
 use atlas_smr_application::ExecutorHandle;
@@ -70,7 +67,7 @@ pub(crate) enum ReplicaPhase<R> {
 }
 
 pub struct Replica<RP, S, D, OP, DL, ST, LT, NT, PL> where D: ApplicationData + 'static,
-                                                           OP: LoggableOrderProtocol<D, NT> + PersistableOrderProtocol<D, OP::Serialization, OP::PersistableTypes> + 'static,
+                                                           OP: LoggableOrderProtocol<D, NT> + 'static,
                                                            DL: DecisionLog<D, OP, NT, PL> + 'static,
                                                            LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
                                                            ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
@@ -118,7 +115,7 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
     where
         RP: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
-        OP: LoggableOrderProtocol<D, NT> + PersistableOrderProtocol<D, OP::Serialization, OP::StateSerialization> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
+        OP: LoggableOrderProtocol<D, NT> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
         DL: DecisionLog<D, OP, NT, PL> + 'static,
         LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
         ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
@@ -154,6 +151,7 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
         let (exec_tx, exec_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
 
         debug!("{:?} // Initializing timeouts", log_node_id);
+
         // start timeouts handler
         let timeouts = Timeouts::new::<D>(log_node_id.clone(), Duration::from_millis(1),
                                           default_timeout, exec_tx.clone());
@@ -209,7 +207,7 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
             OP::initialize(op_config, op_args)?
         };
 
-        let decision_log = DL::initialize_decision_log(dl_config, persistent_log.clone())?;
+        let decision_log = DL::initialize_decision_log(dl_config, persistent_log.clone(), executor.clone())?;
 
         let log_transfer_protocol = LT::initialize(lt_config, timeouts.clone(), node.clone(), persistent_log.clone())?;
 
@@ -504,32 +502,40 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
         Ok(())
     }
 
-    fn execute_decisions(&mut self, state_transfer: &mut ST, decisions: Vec<ProtocolConsensusDecision<D::Request>>) -> Result<()> {
-        for decision in decisions {
-            if let Some(decided) = decision.batch_info() {
-                if let Err(err) = self.rq_pre_processor.send(PreProcessorMessage::DecidedBatch(decided.client_requests().clone())) {
-                    error!("Error sending decided batch to pre processor: {:?}", err);
-                }
+    fn execute_logged_decisions(&mut self, state_transfer: &mut ST, decisions: MaybeVec<LoggedDecision<D::Request>> ) -> Result<()> {
+        for decision in decisions.into_iter() {
+            let (seq, requests, to_batch) = decision.into_inner();
+
+            if let Err(err) = self.rq_pre_processor.send(PreProcessorMessage::DecidedBatch(requests)) {
+                error!("Error sending decided batch to pre processor: {:?}", err);
             }
 
-            if let Some(decision) = self.persistent_log.wait_for_batch_persistency_and_execute(decision)? {
-                let (seq, batch, _) = decision.into();
+            let last_seq_no_u32 = u32::from(seq);
 
-                let last_seq_no_u32 = u32::from(seq);
-
-                let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
+            let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
 //We check that % == 0 so we don't start multiple checkpoints
-                    state_transfer.handle_app_state_requested(self.ordering_protocol.view(), seq)?
-                } else {
-                    ExecutionResult::Nil
-                };
+                state_transfer.handle_app_state_requested(self.ordering_protocol.view(), seq)?
+            } else {
+                ExecutionResult::Nil
+            };
 
-                match checkpoint {
-                    ExecutionResult::Nil => {
-                        self.executor_handle.queue_update(batch)?
+            match to_batch {
+                LoggedDecisionValue::Execute(requests) => {
+                    match checkpoint {
+                        ExecutionResult::Nil => {
+                            self.executor_handle.queue_update(requests)?
+                        }
+                        ExecutionResult::BeginCheckpoint => {
+                            self.executor_handle.queue_update_and_get_appstate(requests)?
+                        }
                     }
-                    ExecutionResult::BeginCheckpoint => {
-                        self.executor_handle.queue_update_and_get_appstate(batch)?
+                }
+                LoggedDecisionValue::ExecutionNotNeeded => {
+                    match checkpoint {
+                        ExecutionResult::BeginCheckpoint => {
+                            self.executor_handle.get_app_state()?
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -664,7 +670,7 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
         }).collect()));
 
         match self.ordering_protocol.handle_timeout(timed_out)? {
-            OrderProtocolExecResult::RunCst => {
+            OPExecResult::RunCst => {
                 self.run_all_state_transfer(state_transfer)?;
             }
             _ => {}
