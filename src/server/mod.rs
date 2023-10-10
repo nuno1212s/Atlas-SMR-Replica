@@ -10,6 +10,7 @@ use log::{debug, error, info, trace, warn};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
+use atlas_common::globals::ReadOnly;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -19,7 +20,7 @@ use atlas_communication::NetworkNode;
 use atlas_core::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult};
 use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
-use atlas_core::ordering_protocol::{ExecutionResult, OPExecResult, OPPollResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision};
+use atlas_core::ordering_protocol::{DecisionMetadata, DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision, ProtocolMessage};
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage};
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::{ReconfigurableOrderProtocol, ReconfigurationAttemptResult};
@@ -30,7 +31,7 @@ use atlas_core::request_pre_processing::{initialize_request_pre_processor, PrePr
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::smr::networking::serialize::OrderProtocolLog;
 use atlas_core::smr::networking::SMRNetworkNode;
-use atlas_core::smr::smr_decision_log::{DecisionLog, LoggedDecision, LoggedDecisionValue};
+use atlas_core::smr::smr_decision_log::{DecisionLog, LoggedDecision, LoggedDecisionValue, ShareableMessage};
 use atlas_core::state_transfer::{StateTransferProtocol, STResult, STTimeoutResult};
 use atlas_core::timeouts::{RqTimeout, TimedOut, TimeoutKind, Timeouts};
 use atlas_smr_application::ExecutorHandle;
@@ -39,7 +40,7 @@ use atlas_metrics::metrics::{metric_duration, metric_increment};
 use atlas_persistent_log::NoPersistentLog;
 
 use crate::config::ReplicaConfig;
-use crate::metric::{LOG_TRANSFER_PROCESS_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_TAKE_FROM_NETWORK_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
+use crate::metric::{LOG_TRANSFER_PROCESS_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_PROTOCOL_RESP_PROCESS_TIME, REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, REPLICA_TAKE_FROM_NETWORK_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
 use crate::persistent_log::SMRPersistentLog;
 
 
@@ -276,46 +277,14 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
 
                         metric_duration(REPLICA_TAKE_FROM_NETWORK_ID, start.elapsed());
 
-                        let start = Instant::now();
-
                         if let Some(network_message) = network_message {
                             let (header, message) = network_message.into_inner();
 
                             match message {
                                 SystemMessage::ProtocolMessage(protocol) => {
-                                    let start = Instant::now();
+                                    let message = Arc::new(ReadOnly::new(StoredMessage::new(header, protocol.into_inner())));
 
-                                    let message = StoredMessage::new(header, protocol.into_inner());
-
-                                    match self.ordering_protocol.process_message(message)? {
-                                        OPExecResult::MessageDropped | OPExecResult::MessageQueued => {}
-                                        OPExecResult::ProgressedDecision(decision) => {
-                                            for decision_information in decision.into_iter() {
-                                                self.decision_log.decision_information_received(decision_information)?;
-                                            }
-
-                                            //TODO: How will we handle the execution of the requests?
-                                        }
-                                        OPExecResult::Decided(decision) => {
-                                            for decision_information in decision.into_iter() {
-                                                self.decision_log.decision_information_received(decision_information)?;
-                                            }
-                                        }
-                                        OPExecResult::QuorumJoined(decision, quorum) => {
-                                            let (node_id, quorum) = quorum.into_inner();
-
-                                            if let Some(decision) = decision {
-                                                for decision in decision.into_iter() {
-                                                    self.decision_log.decision_information_received(decision)?;
-                                                }
-                                            }
-
-                                            self.handle_quorum_joined(node_id, quorum, state_transfer)?;
-                                        }
-                                        OPExecResult::RunCst => {
-                                            self.run_all_state_transfer(state_transfer)?;
-                                        }
-                                    }
+                                    self.execute_order_protocol_message(state_transfer, message)?;
                                 }
                                 SystemMessage::StateTransferMessage(state_transfer_msg) => {
                                     state_transfer.handle_off_ctx_message(self.ordering_protocol.view(), StoredMessage::new(header, state_transfer_msg))?;
@@ -325,42 +294,13 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
                                     self.rq_pre_processor.send(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
                                 }
                                 SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
-
                                     let message = fwd_protocol.into_inner();
 
                                     let (header, message) = message.into_inner();
 
-                                    let message = StoredMessage::new(header, message.into_inner());
+                                    let message = Arc::new(ReadOnly::new(StoredMessage::new(header, message.into_inner())));
 
-                                    match self.ordering_protocol.process_message(message)? {
-                                        OPExecResult::MessageDropped | OPExecResult::MessageQueued => {}
-                                        OPExecResult::ProgressedDecision(decision) => {
-                                            for decision_information in decision.into_iter() {
-                                                self.decision_log.decision_information_received(decision_information)?;
-                                            }
-
-                                            //TODO: How will we handle the execution of the requests?
-                                        }
-                                        OPExecResult::Decided(decision) => {
-                                            for decision_information in decision.into_iter() {
-                                                self.decision_log.decision_information_received(decision_information)?;
-                                            }
-                                        }
-                                        OPExecResult::QuorumJoined(decision, quorum) => {
-                                            let (node_id, quorum) = quorum.into_inner();
-
-                                            if let Some(decision) = decision {
-                                                for decision in decision.into_iter() {
-                                                    self.decision_log.decision_information_received(decision)?;
-                                                }
-                                            }
-
-                                            self.handle_quorum_joined(node_id, quorum, state_transfer)?;
-                                        }
-                                        OPExecResult::RunCst => {
-                                            self.run_all_state_transfer(state_transfer)?;
-                                        }
-                                    }
+                                    self.execute_order_protocol_message(state_transfer, message)?;
                                 }
                                 SystemMessage::LogTransferMessage(log_transfer) => {
                                     self.log_transfer_protocol.handle_off_ctx_message(&mut self.ordering_protocol, StoredMessage::new(header, log_transfer)).unwrap();
@@ -373,61 +313,40 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
                             // Receive timeouts in the beginning of the next iteration
                             return Ok(());
                         }
-
-                        metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
-                        metric_increment(REPLICA_ORDERED_RQS_PROCESSED_ID, Some(1));
                     }
                     OPPollResult::Exec(message) => {
-                        let start = Instant::now();
-
-                        match self.ordering_protocol.process_message(message)? {
-                            OPExecResult::MessageDropped | OPExecResult::MessageQueued => {}
-                            OPExecResult::ProgressedDecision(decision) => {
-                                for decision_information in decision.into_iter() {
-                                    self.decision_log.decision_information_received(decision_information)?;
-                                }
-
-                                //TODO: How will we handle the execution of the requests?
-                            }
-                            OPExecResult::Decided(decision) => {
-                                for decision_information in decision.into_iter() {
-                                    self.decision_log.decision_information_received(decision_information)?;
-                                }
-                            }
-                            OPExecResult::QuorumJoined(decision, quorum) => {
-                                let (node_id, quorum) = quorum.into_inner();
-
-                                if let Some(decision) = decision {
-                                    for decision in decision.into_iter() {
-                                        self.decision_log.decision_information_received(decision)?;
-                                    }
-                                }
-
-                                self.handle_quorum_joined(node_id, quorum, state_transfer)?;
-                            }
-                            OPExecResult::RunCst => {
-                                self.run_all_state_transfer(state_transfer)?;
+                        self.execute_order_protocol_message(state_transfer, message)?;
+                    }
+                    OPPollResult::ProgressedDecision(clear_ahead, decision) => {
+                        match clear_ahead {
+                            DecisionsAhead::Ignore => {}
+                            DecisionsAhead::ClearAhead => {
+                                self.clear_currently_executing()?;
                             }
                         }
 
-                        metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
-                        metric_increment(REPLICA_ORDERED_RQS_PROCESSED_ID, Some(1));
-                    }
-                    OPPollResult::Decided(decision) => {
                         for decision_information in decision.into_iter() {
-                            self.decision_log.decision_information_received(decision_information)?;
+                            self.execute_logged_decisions(state_transfer, self.decision_log.decision_information_received(decision_information)?)?;
                         }
                     }
-                    OPPollResult::QuorumJoined(decision, join_info) => {
+                    OPPollResult::QuorumJoined(clear_ahead, decision, join_info) => {
+                        match clear_ahead {
+                            DecisionsAhead::Ignore => {}
+                            DecisionsAhead::ClearAhead => {
+                                self.clear_currently_executing()?;
+                            }
+                        }
+
                         let (node_id, quorum) = join_info.into_inner();
+
+                        self.handle_quorum_joined(node_id, quorum, state_transfer)?;
 
                         if let Some(decision) = decision {
                             for decision in decision.into_iter() {
-                                self.decision_log.decision_information_received(decision)?;
+                                self.execute_logged_decisions(state_transfer, self.decision_log.decision_information_received(decision)?)?;
                             }
                         }
 
-                        self.handle_quorum_joined(node_id, quorum, state_transfer)?;
                     }
                 }
             }
@@ -439,7 +358,7 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
 
                     match message {
                         SystemMessage::ProtocolMessage(protocol) => {
-                            self.ordering_protocol.handle_off_ctx_message(StoredMessage::new(header, protocol));
+                            self.ordering_protocol.handle_off_ctx_message(Arc::new(ReadOnly::new(StoredMessage::new(header, protocol))));
                         }
                         SystemMessage::StateTransferMessage(state_transfer_msg) => {
                             let start = Instant::now();
@@ -502,7 +421,63 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
         Ok(())
     }
 
-    fn execute_logged_decisions(&mut self, state_transfer: &mut ST, decisions: MaybeVec<LoggedDecision<D::Request>> ) -> Result<()> {
+    fn execute_order_protocol_message(&mut self, state_transfer: &mut ST, message: ShareableMessage<ProtocolMessage<D, OP::Serialization>>) -> Result<()> {
+        let start = Instant::now();
+
+        let exec_result = self.ordering_protocol.process_message(message)?;
+
+        metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
+
+        let start = Instant::now();
+
+        match exec_result {
+            OPExecResult::MessageDropped | OPExecResult::MessageQueued | OPExecResult::MessageProcessedNoUpdate => {}
+            OPExecResult::ProgressedDecision(clear_decisions, decision) => {
+                match clear_decisions {
+                    DecisionsAhead::Ignore => {}
+                    DecisionsAhead::ClearAhead => {
+                        self.clear_currently_executing()?;
+                    }
+                }
+
+                for decision_information in decision.into_iter() {
+                    self.execute_logged_decisions(state_transfer, self.decision_log.decision_information_received(decision_information)?)?;
+                }
+            }
+            OPExecResult::QuorumJoined(clear_decisions, decision, quorum) => {
+                match clear_decisions {
+                    DecisionsAhead::Ignore => {}
+                    DecisionsAhead::ClearAhead => {
+                        self.clear_currently_executing()?;
+                    }
+                }
+
+                let (node_id, quorum) = quorum.into_inner();
+
+                self.handle_quorum_joined(node_id, quorum, state_transfer)?;
+
+                if let Some(decision) = decision {
+                    for decision in decision.into_iter() {
+                        self.execute_logged_decisions(state_transfer, self.decision_log.decision_information_received(decision)?)?;
+                    }
+                }
+            }
+            OPExecResult::RunCst => {
+                self.run_all_state_transfer(state_transfer)?;
+            }
+        }
+
+        metric_duration(REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, start.elapsed());
+        metric_increment(REPLICA_ORDERED_RQS_PROCESSED_ID, Some(1));
+
+        Ok(())
+    }
+
+    fn clear_currently_executing(&mut self) -> Result<()> {
+        self.decision_log.clear_decisions_forward(self.decision_log.sequence_number())
+    }
+
+    fn execute_logged_decisions(&mut self, state_transfer: &mut ST, decisions: MaybeVec<LoggedDecision<D::Request>>) -> Result<()> {
         for decision in decisions.into_iter() {
             let (seq, requests, to_batch) = decision.into_inner();
 
@@ -531,12 +506,7 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
                     }
                 }
                 LoggedDecisionValue::ExecutionNotNeeded => {
-                    match checkpoint {
-                        ExecutionResult::BeginCheckpoint => {
-                            self.executor_handle.get_app_state()?
-                        }
-                        _ => {}
-                    }
+                    // When the execution is handled
                 }
             }
         }
