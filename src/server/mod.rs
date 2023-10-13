@@ -20,7 +20,7 @@ use atlas_communication::NetworkNode;
 use atlas_core::log_transfer::{LogTransferProtocol, LTResult, LTTimeoutResult};
 use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
-use atlas_core::ordering_protocol::{DecisionMetadata, DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OrderingProtocol, OrderingProtocolArgs, ProtocolConsensusDecision, ProtocolMessage};
+use atlas_core::ordering_protocol::{DecisionMetadata, DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OrderingProtocol, OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolConsensusDecision, ProtocolMessage};
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage};
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::{ReconfigurableOrderProtocol, ReconfigurationAttemptResult};
@@ -116,7 +116,7 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
     where
         RP: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
-        OP: LoggableOrderProtocol<D, NT> + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
+        OP: LoggableOrderProtocol<D, NT> + PermissionedOrderingProtocol + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
         DL: DecisionLog<D, OP, NT, PL> + 'static,
         LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
         ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
@@ -243,7 +243,7 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
 
         info!("{:?} // Requesting state", log_node_id);
 
-        replica.log_transfer_protocol.request_latest_log(&mut replica.ordering_protocol)?;
+        replica.log_transfer_protocol.request_latest_log(&mut replica.decision_log, replica.ordering_protocol.view())?;
 
         Ok(replica)
     }
@@ -303,7 +303,8 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
                                     self.execute_order_protocol_message(state_transfer, message)?;
                                 }
                                 SystemMessage::LogTransferMessage(log_transfer) => {
-                                    self.log_transfer_protocol.handle_off_ctx_message(&mut self.ordering_protocol, StoredMessage::new(header, log_transfer)).unwrap();
+                                    self.log_transfer_protocol.handle_off_ctx_message(&mut self.decision_log, self.ordering_protocol.view(),
+                                                                                      StoredMessage::new(header, log_transfer)).unwrap();
                                 }
                                 _ => {
                                     error!("{:?} // Received unsupported message {:?}", NetworkNode::id(&*self.node), message);
@@ -346,7 +347,6 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
                                 self.execute_logged_decisions(state_transfer, self.decision_log.decision_information_received(decision)?)?;
                             }
                         }
-
                     }
                 }
             }
@@ -405,8 +405,13 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
                                     self.log_transfer_protocol_done(state_transfer, log.first_seq().unwrap_or(SeqNo::ZERO), log.sequence_number(), Vec::new())?;
                                 }
                                 LTResult::LTPFinished(first_seq, last_seq, requests_to_execute) => {
-                                    info!("{:?} // Log transfer finished. Installed log into decision log and received requests", NetworkNode::id(&*self.node));
+                                    info!("{:?} // Log transfer finished. Installed log into decision log and received requests", NetworkNode::id(&*selfx.node));
                                     self.log_transfer_protocol_done(state_transfer, first_seq, last_seq, requests_to_execute)?;
+                                }
+                                LTResult::InstallSeq(seq) => {
+                                    info!("{:?} // Log transfer protocol indicated Sequence number, installing it into the ordering protocol", NetworkNode::id(&*self.node));
+
+                                    self.ordering_protocol.install_seq_no(seq)?;
                                 }
                             }
 
