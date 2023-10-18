@@ -1,19 +1,18 @@
-use std::ops::Deref;
 use std::sync::Arc;
+
 use atlas_common::channel;
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::ChannelSyncRx;
 use atlas_common::globals::ReadOnly;
 use atlas_common::node_id::NodeId;
-use atlas_communication::message::{NetworkMessageKind, StoredMessage, System};
+use atlas_communication::message::StoredMessage;
 use atlas_communication::protocol_node::ProtocolNetworkNode;
-use atlas_execution::app::{Request};
-use atlas_execution::serialize::ApplicationData;
 use atlas_core::followers::{FollowerChannelMsg, FollowerEvent, FollowerHandle};
 use atlas_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_core::messages::{Protocol, SystemMessage};
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage, PermissionedOrderingProtocolMessage};
 use atlas_core::serialize::Service;
 use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
+use atlas_smr_application::serialize::ApplicationData;
 
 /// Store information of the current followers of the quorum
 /// This information will be used to calculate which replicas have to send the

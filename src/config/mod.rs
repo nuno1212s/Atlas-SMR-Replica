@@ -5,8 +5,8 @@ use atlas_common::ordering::SeqNo;
 use atlas_communication::FullNetworkNode;
 use atlas_core::log_transfer::LogTransferProtocol;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
-use atlas_core::ordering_protocol::OrderingProtocol;
-use atlas_core::persistent_log::{DivisibleStateLog, MonolithicStateLog, PersistableOrderProtocol, PersistableStateTransferProtocol};
+use atlas_core::ordering_protocol::{OrderingProtocol, PermissionedOrderingProtocol};
+use atlas_core::persistent_log::{DivisibleStateLog, MonolithicStateLog, PersistableStateTransferProtocol};
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_core::serialize::{Service};
 use atlas_core::smr::smr_decision_log::DecisionLog;
@@ -24,12 +24,12 @@ pub struct MonolithicStateReplicaConfig<RF, S, A, OP, DL, ST, LT, NT, PL>
     where RF: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + 'static,
-          OP: LoggableOrderProtocol<A::AppData, NT> + 'static + PersistableOrderProtocol<A::AppData, OP::Serialization, OP::StateSerialization>,
+          OP: LoggableOrderProtocol<A::AppData, NT> + PermissionedOrderingProtocol + 'static,
           DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
           ST: MonolithicStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
           LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
           NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>>,
-          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + MonolithicStateLog<S> {
+          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization, OP::PermissionedSerialization> + MonolithicStateLog<S> {
     /// The application logic.
     pub service: A,
 
@@ -44,12 +44,12 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, DL, ST, LT, NT, PL>
         RF: ReconfigurationProtocol + 'static,
         S: DivisibleState + 'static,
         A: Application<S> + 'static,
-        OP: LoggableOrderProtocol<A::AppData, NT> + 'static + PersistableOrderProtocol<A::AppData, OP::Serialization, OP::StateSerialization>,
+        OP: LoggableOrderProtocol<A::AppData, NT> + PermissionedOrderingProtocol + 'static,
         DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
         ST: DivisibleStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
         LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
         NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization>>,
-        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> + DivisibleStateLog<S> {
+        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization, OP::PermissionedSerialization> + DivisibleStateLog<S> {
     /// The application logic.
     pub service: A,
 
@@ -63,12 +63,12 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, DL, ST, LT, NT, PL>
 pub struct ReplicaConfig<RF, S, D, OP, DL, ST, LT, NT, PL> where
     RF: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
-    OP: LoggableOrderProtocol<D, NT> + 'static + PersistableOrderProtocol<D, OP::Serialization, OP::StateSerialization>,
+    OP: LoggableOrderProtocol<D, NT> + PermissionedOrderingProtocol + 'static,
     ST: StateTransferProtocol<S, NT, PL> + 'static,
     DL: DecisionLog<D, OP, NT, PL> + 'static,
     LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
     NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<D, OP::Serialization, ST::Serialization, LT::Serialization>>,
-    PL: SMRPersistentLog<D, OP::Serialization, OP::StateSerialization, OP::PermissionedSerialization> {
+    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization, OP::PermissionedSerialization> {
     /// ID of the Node in question
     pub id: NodeId,
 

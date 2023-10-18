@@ -10,8 +10,8 @@ use atlas_core::messages::{ReplyMessage, SystemMessage};
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::serialize::Service;
 use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
-use atlas_execution::app::BatchReplies;
-use atlas_execution::serialize::ApplicationData;
+use atlas_smr_application::app::BatchReplies;
+use atlas_smr_application::serialize::ApplicationData;
 
 type RepliesType<S> = BatchReplies<S>;
 
