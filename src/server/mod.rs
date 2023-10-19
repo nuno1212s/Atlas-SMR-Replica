@@ -23,7 +23,7 @@ use atlas_core::messages::SystemMessage;
 use atlas_core::ordering_protocol;
 use atlas_core::ordering_protocol::{DecisionMetadata, DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OrderingProtocol, OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolConsensusDecision, ProtocolMessage};
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
-use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage};
+use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::{ReconfigurableOrderProtocol, ReconfigurationAttemptResult};
 use atlas_core::persistent_log::OperationMode;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
@@ -114,11 +114,24 @@ pub struct QuorumReconfig {
     node_pending_join: Option<NodeId>,
 }
 
+
+pub trait ReconfigurableProtocolHandling {
+    fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()>;
+
+    fn attempt_to_join_quorum(&mut self) -> Result<()>;
+}
+
+pub trait PermissionedProtocolHandling {
+    fn view<V>(&self) -> V where V: NetworkView;
+
+
+}
+
 impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
     where
         RP: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
-        OP: LoggableOrderProtocol<D, NT> + PermissionedOrderingProtocol + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
+        OP: LoggableOrderProtocol<D, NT> + PermissionedOrderingProtocol + Send + 'static,
         DL: DecisionLog<D, OP, NT, PL> + 'static,
         LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
         ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
@@ -202,7 +215,6 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
                                            rq_pre_processor.clone(),
                                            batch_input, node.clone(),
                                            quorum);
-
 
         let decision_log = DL::initialize_decision_log(dl_config, persistent_log.clone(), executor.clone())?;
 
@@ -856,56 +868,6 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
         Ok(())
     }
 
-    fn attempt_to_join_quorum(&mut self) -> Result<()> {
-        match self.ordering_protocol.joining_quorum()? {
-            ReconfigurationAttemptResult::Failed => {
-                self.reply_to_attempt_quorum_join(true)?;
-            }
-            ReconfigurationAttemptResult::CurrentlyReconfiguring(_) => {
-                self.reply_to_attempt_quorum_join(true)?;
-            }
-            ReconfigurationAttemptResult::InProgress => {}
-            ReconfigurationAttemptResult::Successful | ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
-                // If we are already part of the quorum, then we can immediately reply to it
-                self.reply_to_attempt_quorum_join(false)?;
-            }
-        };
-
-        Ok(())
-    }
-
-    /// Attempt to join the quorum
-    fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
-        match self.replica_phase {
-            ReplicaPhase::OrderingProtocol => {
-                let quorum_node_join = self.ordering_protocol.attempt_quorum_node_join(node)?;
-
-                debug!("{:?} // Attempting to join quorum with result {:?}", self.id(), quorum_node_join);
-
-                match quorum_node_join {
-                    ReconfigurationAttemptResult::Failed => {
-                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::Failed))?;
-                    }
-                    ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
-                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::AlreadyPartOfQuorum))?;
-                    }
-                    ReconfigurationAttemptResult::CurrentlyReconfiguring(_) => {
-                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::OngoingReconfiguration))?;
-                    }
-                    ReconfigurationAttemptResult::InProgress => {}
-                    ReconfigurationAttemptResult::Successful => {
-                        self.reply_to_quorum_entrance_request(node, None)?;
-                    }
-                };
-            }
-            ReplicaPhase::StateTransferProtocol { .. } => {
-                self.append_pending_join_node(node);
-            }
-        }
-
-        Ok(())
-    }
-
     /// We are pending a node join
     fn append_pending_join_node(&mut self, node: NodeId) -> bool {
         self.quorum_reconfig_data.append_pending_node_join(node)
@@ -974,6 +936,86 @@ impl QuorumReconfig {
         std::mem::replace(&mut self.node_pending_join, None)
     }
 }
+
+/// Default protocol with no reconfiguration support handling
+impl<RP, S, D, OP, DL, ST, LT, NT, PL> ReconfigurableProtocolHandling for Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
+    where RP: ReconfigurationProtocol + 'static,
+          D: ApplicationData + 'static,
+          OP: LoggableOrderProtocol<D, NT> + PermissionedOrderingProtocol + Send + 'static,
+          DL: DecisionLog<D, OP, NT, PL> + 'static,
+          LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
+          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization> + 'static,
+          PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization, OP::PermissionedSerialization> + 'static, {
+    default fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
+        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::Failed))
+    }
+
+    default fn attempt_to_join_quorum(&mut self) -> Result<()> {
+        self.reply_to_attempt_quorum_join(true)
+    }
+}
+
+/// Implement reconfigurable order protocol support
+impl<RP, S, D, OP, DL, ST, LT, NT, PL> ReconfigurableProtocolHandling for Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
+    where RP: ReconfigurationProtocol + 'static,
+          D: ApplicationData + 'static,
+          OP: LoggableOrderProtocol<D, NT> + PermissionedOrderingProtocol + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
+          DL: DecisionLog<D, OP, NT, PL> + 'static,
+          LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
+          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization> + 'static,
+          PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization, OP::PermissionedSerialization> + 'static, {
+    fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
+        match self.replica_phase {
+            ReplicaPhase::OrderingProtocol => {
+                let quorum_node_join = self.ordering_protocol.attempt_quorum_node_join(node)?;
+
+                debug!("{:?} // Attempting to join quorum with result {:?}", self.id(), quorum_node_join);
+
+                match quorum_node_join {
+                    ReconfigurationAttemptResult::Failed => {
+                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::Failed))?;
+                    }
+                    ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
+                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::AlreadyPartOfQuorum))?;
+                    }
+                    ReconfigurationAttemptResult::CurrentlyReconfiguring(_) => {
+                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::OngoingReconfiguration))?;
+                    }
+                    ReconfigurationAttemptResult::InProgress => {}
+                    ReconfigurationAttemptResult::Successful => {
+                        self.reply_to_quorum_entrance_request(node, None)?;
+                    }
+                };
+            }
+            ReplicaPhase::StateTransferProtocol { .. } => {
+                self.append_pending_join_node(node);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn attempt_to_join_quorum(&mut self) -> Result<()> {
+        match self.ordering_protocol.joining_quorum()? {
+            ReconfigurationAttemptResult::Failed => {
+                self.reply_to_attempt_quorum_join(true)?;
+            }
+            ReconfigurationAttemptResult::CurrentlyReconfiguring(_) => {
+                self.reply_to_attempt_quorum_join(true)?;
+            }
+            ReconfigurationAttemptResult::InProgress => {}
+            ReconfigurationAttemptResult::Successful | ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
+                // If we are already part of the quorum, then we can immediately reply to it
+                self.reply_to_attempt_quorum_join(false)?;
+            }
+        };
+
+        Ok(())
+    }
+}
+
 
 /// Checkpoint period.
 ///

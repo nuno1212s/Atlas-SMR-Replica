@@ -1,3 +1,5 @@
+#![feature(specialization)]
+
 pub mod server;
 pub mod config;
 pub mod metric;
