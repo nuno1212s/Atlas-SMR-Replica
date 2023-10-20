@@ -159,12 +159,14 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
 
         let node = Arc::new(NT::bootstrap(network_info.clone(), node_config).await?);
 
-        let (reconf_tx, reconf_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
-        let (reconf_response_tx, reply_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
+        let (reconf_tx, reconf_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL,
+        Some("Reconfiguration Channel message"));
+        let (reconf_response_tx, reply_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL,
+        Some("Reconfiguration Channel Response Message"));
 
         let default_timeout = Duration::from_secs(3);
 
-        let (exec_tx, exec_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL);
+        let (exec_tx, exec_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL,  None);
 
         debug!("{:?} // Initializing timeouts", log_node_id);
 
@@ -224,7 +226,7 @@ impl<RP, S, D, OP, DL, ST, LT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, NT, PL>
 
         info!("{:?} // Finished bootstrapping node.", log_node_id);
 
-        let timeout_channel = channel::new_bounded_sync(1024);
+        let timeout_channel = channel::new_bounded_sync(1024, Some("SMR Timeout work channel"));
 
         let state_transfer = ReplicaPhase::StateTransferProtocol {
             state_transfer: None,

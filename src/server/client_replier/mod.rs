@@ -55,7 +55,8 @@ impl<D> Clone for ReplyHandle<D> where D: ApplicationData {
 
 impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
     pub fn new(node_id: NodeId, send_node: Arc<NT>) -> ReplyHandle<D> {
-        let (ch_tx, ch_rx) = channel::new_bounded_sync(REPLY_CHANNEL_SIZE);
+        let (ch_tx, ch_rx) = channel::new_bounded_sync(REPLY_CHANNEL_SIZE,
+        Some("Reply channel work channel"));
 
         let reply_task = Self {
             node_id,
