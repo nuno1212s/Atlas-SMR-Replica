@@ -84,7 +84,7 @@ impl<RP, ME, S, A, OP, DL, ST, LT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, ST, 
                                                      node.clone(), inner_replica.persistent_log.clone(),
                                                      state_tx.clone())?;
 
-        let digest_app_state = channel::new_bounded_sync(5);
+        let digest_app_state = channel::new_bounded_sync(5, Some("Digested App State Channel"));
 
         let view = inner_replica.ordering_protocol.view();
 

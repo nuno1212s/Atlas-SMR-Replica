@@ -39,7 +39,8 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage<D, OP> + 'static,
               NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
-        let (tx, rx) = channel::new_bounded_sync(1024);
+        let (tx, rx) = channel::new_bounded_sync(1024,
+                                                 Some("Follower Channel"));
 
         let follower_handling = Self {
             own_id: id,
