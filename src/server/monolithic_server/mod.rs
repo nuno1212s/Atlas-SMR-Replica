@@ -32,11 +32,11 @@ use crate::persistent_log::SMRPersistentLog;
 use crate::server::Replica;
 
 /// Replica type made to handle monolithic states and executors
-pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, NT, PL>
+pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + Send + 'static,
-          OP: LoggableOrderProtocol<A::AppData, NT> + PermissionedOrderingProtocol + ReconfigurableOrderProtocol<RP::Serialization> + 'static,
+          OP: LoggableOrderProtocol<A::AppData, NT> + 'static,
           DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
           ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
