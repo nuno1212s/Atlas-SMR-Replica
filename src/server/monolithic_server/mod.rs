@@ -13,6 +13,7 @@ use atlas_communication::FullNetworkNode;
 use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::log_transfer::LogTransferProtocol;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
+use atlas_core::ordering_protocol::permissioned::ViewTransferProtocol;
 use atlas_core::ordering_protocol::PermissionedOrderingProtocol;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
 use atlas_core::persistent_log::{MonolithicStateLog, PersistableStateTransferProtocol};
@@ -40,10 +41,11 @@ pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
           DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
           ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
-          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization, OP::PermissionedSerialization> + MonolithicStateLog<S> + 'static, {
+          VT: ViewTransferProtocol<OP, NT> + 'static,
+          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static, {
     p: PhantomData<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
-    inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, NT, PL>,
+    inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>,
 
     state_tx: ChannelSyncTx<InstallStateMessage<S>>,
     checkpoint_rx: ChannelSyncRx<AppStateMessage<S>>,
@@ -52,7 +54,7 @@ pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
     state_transfer_protocol: ST,
 }
 
-impl<RP, ME, S, A, OP, DL, ST, LT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, ST, LT, NT, PL>
+impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
     where
         RP: ReconfigurationProtocol + 'static,
         ME: TMonolithicStateExecutor<A, S, NT> + 'static,
@@ -61,10 +63,11 @@ impl<RP, ME, S, A, OP, DL, ST, LT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, ST, 
         OP: LoggableOrderProtocol<A::AppData, NT> + PermissionedOrderingProtocol + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
         DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
         LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
+        VT: ViewTransferProtocol<OP, NT> + 'static,
         ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
-        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization, OP::PermissionedSerialization> + MonolithicStateLog<S> + 'static,
-        NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization> + 'static, {
-    pub async fn bootstrap(cfg: MonolithicStateReplicaConfig<RP, S, A, OP, DL, ST, LT, NT, PL>) -> Result<Self> {
+        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
+        NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
+    pub async fn bootstrap(cfg: MonolithicStateReplicaConfig<RP, S, A, OP, DL, ST, LT, VT, NT, PL>) -> Result<Self> {
         let MonolithicStateReplicaConfig {
             service,
             replica_config,
@@ -73,7 +76,7 @@ impl<RP, ME, S, A, OP, DL, ST, LT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, ST, 
 
         let (executor_handle, executor_receiver) = ME::init_handle();
 
-        let inner_replica = Replica::<RP, S, A::AppData, OP, DL, ST, LT, NT, PL>::bootstrap(replica_config, executor_handle.clone()).await?;
+        let inner_replica = Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>::bootstrap(replica_config, executor_handle.clone()).await?;
 
         let node = inner_replica.node.clone();
 

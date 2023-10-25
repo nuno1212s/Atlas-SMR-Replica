@@ -7,7 +7,7 @@ use atlas_common::node_id::NodeId;
 use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_core::messages::{ReplyMessage, SystemMessage};
-use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, ViewTransferProtocolMessage};
 use atlas_core::serialize::Service;
 use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_application::app::BatchReplies;
@@ -56,7 +56,7 @@ impl<D> Clone for ReplyHandle<D> where D: ApplicationData {
 impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
     pub fn new(node_id: NodeId, send_node: Arc<NT>) -> ReplyHandle<D> {
         let (ch_tx, ch_rx) = channel::new_bounded_sync(REPLY_CHANNEL_SIZE,
-        Some("Reply channel work channel"));
+                                                       Some("Reply channel work channel"));
 
         let reply_task = Self {
             node_id,
@@ -71,10 +71,12 @@ impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
         handle
     }
 
-    pub fn start<OP, ST, LP>(mut self) where OP: OrderingProtocolMessage<D> + 'static,
-                                             ST: StateTransferMessage + 'static,
-                                             LP: LogTransferMessage<D, OP> + 'static,
-                                             NT: ProtocolNetworkNode<Service<D, OP, ST, LP>> {
+    pub fn start<OP, ST, LP, VT>(mut self)
+        where OP: OrderingProtocolMessage<D> + 'static,
+              ST: StateTransferMessage + 'static,
+              LP: LogTransferMessage<D, OP> + 'static,
+              VT: ViewTransferProtocolMessage + 'static,
+              NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
         std::thread::Builder::new().name(format!("{:?} // Reply thread", self.node_id))
             .spawn(move || {
                 loop {

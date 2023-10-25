@@ -31,7 +31,7 @@ pub trait SMRPersistentLog<D, OPM, POPT, LS, >: OrderingProtocolLog<D, OPM> + Pe
             Self: Sized;
 }
 
-impl<S, D, OPM, POPT, LS, STM> SMRPersistentLog<D, OPM, POPT, LS,> for MonStatePersistentLog<S, D, OPM, POPT, LS, POP, STM>
+impl<S, D, OPM, POPT, LS, STM> SMRPersistentLog<D, OPM, POPT, LS,> for MonStatePersistentLog<S, D, OPM, POPT, LS, STM>
     where S: MonolithicState + 'static,
           D: ApplicationData + 'static,
           OPM: OrderingProtocolMessage<D> + 'static,

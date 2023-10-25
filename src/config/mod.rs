@@ -25,13 +25,13 @@ pub struct MonolithicStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
     where RF: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + 'static,
-          OP: LoggableOrderProtocol<A::AppData, NT> + PermissionedOrderingProtocol + 'static,
+          OP: LoggableOrderProtocol<A::AppData, NT> + 'static,
           DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
           ST: MonolithicStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
           VT: ViewTransferProtocol<OP, NT> + 'static,
           LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
           NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
-          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization, OP::PermissionedSerialization> + MonolithicStateLog<S> {
+          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> {
     /// The application logic.
     pub service: A,
 
@@ -46,13 +46,13 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
         RF: ReconfigurationProtocol + 'static,
         S: DivisibleState + 'static,
         A: Application<S> + 'static,
-        OP: LoggableOrderProtocol<A::AppData, NT> + PermissionedOrderingProtocol + 'static,
+        OP: LoggableOrderProtocol<A::AppData, NT> + 'static,
         DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
         ST: DivisibleStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
         VT: ViewTransferProtocol<OP, NT> + 'static,
         LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
         NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
-        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization, OP::PermissionedSerialization> + DivisibleStateLog<S> {
+        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + DivisibleStateLog<S> {
     /// The application logic.
     pub service: A,
 
@@ -66,13 +66,13 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
 pub struct ReplicaConfig<RF, S, D, OP, DL, ST, LT, VT, NT, PL> where
     RF: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
-    OP: LoggableOrderProtocol<D, NT> + PermissionedOrderingProtocol + 'static,
+    OP: LoggableOrderProtocol<D, NT> + 'static,
     ST: StateTransferProtocol<S, NT, PL> + 'static,
     DL: DecisionLog<D, OP, NT, PL> + 'static,
     VT: ViewTransferProtocol<OP, NT> + 'static,
     LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
     NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
-    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization, OP::PermissionedSerialization> {
+    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> {
     /// ID of the Node in question
     pub id: NodeId,
 
