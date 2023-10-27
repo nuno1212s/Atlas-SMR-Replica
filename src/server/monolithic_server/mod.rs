@@ -44,7 +44,8 @@ pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
           ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
           VT: ViewTransferProtocol<OP, NT> + 'static,
-          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static, {
+          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     p: PhantomData<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
     inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>,
@@ -82,8 +83,8 @@ impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, 
         let inner_replica = Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>::bootstrap(replica_config, executor_handle.clone(), handle).await?;
 
         MonStateTransfer::init_state_transfer_thread(state_tx, checkpoint_rx, st_config,
-                                                         node.clone(), inner_replica.timeouts.clone(),
-                                                         inner_replica.persistent_log.clone(), inner_handle)?;
+                                                     node.clone(), inner_replica.timeouts.clone(),
+                                                     inner_replica.persistent_log.clone(), inner_handle);
 
         let view = inner_replica.ordering_protocol.view();
 

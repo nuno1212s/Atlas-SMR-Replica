@@ -35,6 +35,7 @@ pub struct DivStReplica<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL>
           LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
           VT: ViewTransferProtocol<OP, NT> + 'static,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static + DivisibleStateLog<S>,
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static,
 {
     p: PhantomData<(A, SE)>,
     /// The inner replica object, responsible for the general replica things
@@ -72,7 +73,7 @@ impl<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL> DivStReplica<RP, SE, S, A, OP, DL
 
         DivStateTransfer::init_state_transfer_thread(state_tx, checkpoint_rx, st_config,
                                                      node.clone(), inner_replica.timeouts.clone(),
-                                                     inner_replica.persistent_log.clone(), inner_handle)?;
+                                                     inner_replica.persistent_log.clone(), inner_handle);
 
         let view = inner_replica.view();
 

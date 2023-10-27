@@ -42,13 +42,14 @@ impl<V, S, NT, PL, ST> MonStateTransfer<V, S, NT, PL, ST>
                                       persistent_log: PL,
                                       handle: StateTransferThreadInnerHandle<V, ST::Serialization>)  {
 
-        let inner_mngr = StateTransferMngr::initialize_core_state_transfer(handle)?;
+        let inner_mngr = StateTransferMngr::initialize_core_state_transfer(handle)
+            .expect("Failed to initialize state transfer inner layer");
 
         let digest_app_state = channel::new_bounded_sync(5, Some("Digested App State Channel"));
 
         let state_transfer_protocol = ST::initialize(st_config, timeouts,
                                                      node, persistent_log,
-                                                     state_tx.clone())?;
+                                                     state_tx.clone()).expect("Failed to init state transfer protocol");
 
         let state_transfer_manager = Self {
             inner_state: inner_mngr,
@@ -68,6 +69,11 @@ impl<V, S, NT, PL, ST> MonStateTransfer<V, S, NT, PL, ST>
                 }
             })
             .expect("Failed to allocate the state transfer thread");
+    }
+
+    pub fn run(self) -> Result<()> {
+
+        Ok(())
     }
 
     fn receive_checkpoints(&mut self) -> Result<()> {

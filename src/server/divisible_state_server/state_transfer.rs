@@ -1,5 +1,8 @@
 use std::sync::Arc;
 use std::time::Instant;
+
+use log::error;
+
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
@@ -8,10 +11,10 @@ use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
 use atlas_core::state_transfer::StateTransferProtocol;
 use atlas_core::timeouts::Timeouts;
 use atlas_metrics::metrics::metric_duration;
-use atlas_persistent_log::PersistentLog;
 use atlas_smr_application::state::divisible_state::{AppState, AppStateMessage, DivisibleState, InstallStateMessage};
+
 use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
-use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadHandle, StateTransferThreadInnerHandle};
+use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};
 
 pub struct DivStateTransfer<V, S, NT, PL, ST>
     where V: NetworkView,
@@ -38,11 +41,12 @@ impl<V, S, NT, PL, ST> DivStateTransfer<V, S, NT, PL, ST>
                                       timeouts: Timeouts,
                                       persistent_log: PL,
                                       handle: StateTransferThreadInnerHandle<V, ST::Serialization>) {
-        let inner_mngr = StateTransferMngr::initialize_core_state_transfer(handle)?;
+        let inner_mngr = StateTransferMngr::initialize_core_state_transfer(handle)
+            .expect("Failed to initialize state transfer inner layer");
 
         let state_transfer_protocol = ST::initialize(st_config, timeouts,
                                                      node, persistent_log,
-                                                     state_tx.clone())?;
+                                                     state_tx.clone()).expect("Failed to init state transfer protocol");
 
         let state_transfer_manager = Self {
             inner_state: inner_mngr,
@@ -51,6 +55,16 @@ impl<V, S, NT, PL, ST> DivStateTransfer<V, S, NT, PL, ST>
             state_transfer_protocol,
         };
 
+        std::thread::Builder::new()
+            .name(String::from("State transfer thread"))
+            .spawn(move || {
+                loop {
+                    if let Err(err) = state_transfer_manager.run() {
+                        error!("Received state transfer error {:?}", err);
+                    }
+                }
+            })
+            .expect("Failed to allocate the state transfer thread");
     }
 
     pub fn run(mut self) -> Result<()> {
@@ -81,7 +95,7 @@ impl<V, S, NT, PL, ST> DivStateTransfer<V, S, NT, PL, ST>
                 }
                 AppState::Done => {
                     self.state_transfer_protocol.handle_state_finished_reception()?;
-                    self.inner_state.notify_of_checkpoint(seq_no)?;
+                    self.inner_state.notify_of_checkpoint(seq_no);
                 }
             }
         }

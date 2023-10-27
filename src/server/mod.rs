@@ -84,7 +84,8 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
           ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           VT: ViewTransferProtocol<OP, NT> + 'static,
           PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
-          RP: ReconfigurationProtocol + 'static {
+          RP: ReconfigurationProtocol + 'static,
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     replica_phase: ReplicaPhase<D::Request>,
 
     quorum_reconfig_data: QuorumReconfig,
@@ -1143,7 +1144,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
           ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           VT: ViewTransferProtocol<OP, NT> + 'static,
           PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
-          RP: ReconfigurationProtocol + 'static {
+          RP: ReconfigurationProtocol + 'static,
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     default type View = MockView;
 
     default fn view(&self) -> Self::View {
@@ -1174,7 +1176,9 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
           ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           VT: ViewTransferProtocol<OP, NT> + 'static,
           PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
-          RP: ReconfigurationProtocol + 'static {
+          RP: ReconfigurationProtocol + 'static,
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
+
     type View = View<OP::PermissionedSerialization>;
 
     fn view(&self) -> Self::View {
@@ -1317,7 +1321,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling for Re
           VT: ViewTransferProtocol<OP, NT> + 'static,
           ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static,
-          PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static, {
+          PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     default fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
         self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::Failed))
     }
@@ -1337,7 +1342,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling for Re
           ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
           VT: ViewTransferProtocol<OP, NT> + 'static,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static,
-          PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static, {
+          PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
         match &self.replica_phase {
             ReplicaPhase::OrderingProtocol(op_phase) => {
