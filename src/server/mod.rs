@@ -155,7 +155,6 @@ pub trait ReconfigurableProtocolHandling {
 pub trait PermissionedProtocolHandling<D, S, VT, OP, ST, NT, PL>
     where VT: ViewTransferProtocol<OP, NT>,
           D: ApplicationData {
-
     type View: NetworkView;
 
     fn view(&self) -> Self::View;
@@ -1141,10 +1140,10 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
           OP: LoggableOrderProtocol<D, NT> + 'static,
           DL: DecisionLog<D, OP, NT, PL> + 'static,
           LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
-          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
+          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           VT: ViewTransferProtocol<OP, NT> + 'static,
           PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
-          RP: ReconfigurationProtocol + 'static, {
+          RP: ReconfigurationProtocol + 'static {
     default type View = MockView;
 
     default fn view(&self) -> Self::View {
@@ -1168,14 +1167,14 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
 }
 
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT, OP, ST, NT, PL> for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
-    where RP: ReconfigurationProtocol + 'static,
-          D: ApplicationData + 'static,
+    where D: ApplicationData + 'static,
           OP: LoggableOrderProtocol<D, NT> + PermissionedOrderingProtocol + 'static,
           DL: DecisionLog<D, OP, NT, PL> + 'static,
           LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
-          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
+          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
           VT: ViewTransferProtocol<OP, NT> + 'static,
-          PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static, {
+          PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
+          RP: ReconfigurationProtocol + 'static {
     type View = View<OP::PermissionedSerialization>;
 
     fn view(&self) -> Self::View {
