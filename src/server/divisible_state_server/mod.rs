@@ -1,3 +1,5 @@
+mod state_transfer;
+
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -20,6 +22,8 @@ use crate::config::DivisibleStateReplicaConfig;
 use crate::metric::RUN_LATENCY_TIME_ID;
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::{PermissionedProtocolHandling, Replica};
+use crate::server::divisible_state_server::state_transfer::DivStateTransfer;
+use crate::server::state_transfer::StateTransferMngr;
 
 pub struct DivStReplica<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
@@ -35,11 +39,6 @@ pub struct DivStReplica<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL>
     p: PhantomData<(A, SE)>,
     /// The inner replica object, responsible for the general replica things
     inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>,
-
-    state_tx: ChannelSyncTx<InstallStateMessage<S>>,
-    checkpoint_rx: ChannelSyncRx<AppStateMessage<S>>,
-    /// State transfer protocols
-    state_transfer_protocol: ST,
 }
 
 impl<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL> DivStReplica<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL> where
@@ -59,68 +58,49 @@ impl<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL> DivStReplica<RP, SE, S, A, OP, DL
             service, replica_config, st_config
         } = cfg;
 
+        let (handle, inner_handle) = StateTransferMngr::init_state_transfer_handles();
+
         let (executor_handle, executor_receiver) = SE::init_handle();
 
-        let inner_replica = Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>::bootstrap(replica_config, executor_handle.clone()).await?;
+        let inner_replica = Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>::bootstrap(replica_config, executor_handle.clone(),
+                                                                                                handle).await?;
 
         let node = inner_replica.node.clone();
 
         let (state_tx, checkpoint_rx) =
             SE::init(executor_receiver, None, service, node.clone())?;
 
-        let state_transfer_protocol = ST::initialize(st_config, inner_replica.timeouts.clone(),
-                                                     node.clone(), inner_replica.persistent_log.clone(),
-                                                     state_tx.clone())?;
+        DivStateTransfer::init_state_transfer_thread(state_tx, checkpoint_rx, st_config,
+                                                     node.clone(), inner_replica.timeouts.clone(),
+                                                     inner_replica.persistent_log.clone(), inner_handle)?;
 
         let view = inner_replica.view();
 
         let mut replica = Self {
             p: Default::default(),
             inner_replica,
-            state_tx,
-            checkpoint_rx,
-            state_transfer_protocol,
         };
 
-        replica.state_transfer_protocol.request_latest_state(view)?;
+        replica.bootstrap_protocols()?;
 
         Ok(replica)
     }
 
+    /// Bootstrap our SMR protocols in order to start
+    fn bootstrap_protocols(&mut self) -> Result<()> {
+        self.inner_replica.bootstrap_protocols()
+    }
+
+    /// Run the main replica thread
     pub fn run(&mut self) -> Result<()> {
         let mut last_loop = Instant::now();
 
         loop {
-            self.receive_checkpoints()?;
-
-            self.inner_replica.run(&mut self.state_transfer_protocol)?;
+            self.inner_replica.run()?;
 
             metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());
 
             last_loop = Instant::now();
         }
-    }
-
-    fn receive_checkpoints(&mut self) -> Result<()> {
-        while let Ok(checkpoint) = self.checkpoint_rx.try_recv() {
-            let (seq_no, state) = checkpoint.into_state();
-
-            let view = self.inner_replica.view();
-
-            match state {
-                AppState::StateDescriptor(descriptor) => {
-                    self.state_transfer_protocol.handle_state_desc_received_from_app(view, descriptor)?;
-                }
-                AppState::StatePart(parts) => {
-                    self.state_transfer_protocol.handle_state_part_received_from_app(view, parts.into_vec())?;
-                }
-                AppState::Done => {
-                    self.state_transfer_protocol.handle_state_finished_reception(view)?;
-                    self.inner_replica.decision_log.state_checkpoint(seq_no)?;
-                }
-            }
-        }
-
-        Ok(())
     }
 }
