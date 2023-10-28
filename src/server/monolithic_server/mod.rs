@@ -31,8 +31,8 @@ use crate::config::MonolithicStateReplicaConfig;
 use crate::metric::RUN_LATENCY_TIME_ID;
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::monolithic_server::state_transfer::MonStateTransfer;
-use crate::server::Replica;
-use crate::server::state_transfer::StateTransferMngr;
+use crate::server::{PermissionedProtocolHandling, Replica};
+use crate::server::state_transfer::{init_state_transfer_handles, StateTransferMngr};
 
 /// Replica type made to handle monolithic states and executors
 pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
@@ -57,7 +57,7 @@ impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, 
         ME: TMonolithicStateExecutor<A, S, NT> + 'static,
         S: MonolithicState + 'static,
         A: Application<S> + Send + 'static,
-        OP: LoggableOrderProtocol<A::AppData, NT> + PermissionedOrderingProtocol + ReconfigurableOrderProtocol<RP::Serialization> + Send + 'static,
+        OP: LoggableOrderProtocol<A::AppData, NT> + Send + 'static,
         DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
         LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
         VT: ViewTransferProtocol<OP, NT> + 'static,
@@ -73,20 +73,21 @@ impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, 
 
         let (executor_handle, executor_receiver) = ME::init_handle();
 
-        let node = replica_config.node.clone();
+        let (handle, inner_handle) = init_state_transfer_handles();
+
+        let inner_replica = Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>::bootstrap(replica_config, executor_handle.clone(), handle).await?;
+
+        let node = inner_replica.node.clone();
 
         let (state_tx, checkpoint_rx) =
             ME::init(executor_receiver, None, service, node.clone())?;
 
-        let (handle, inner_handle) = StateTransferMngr::init_state_transfer_handles();
-
-        let inner_replica = Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>::bootstrap(replica_config, executor_handle.clone(), handle).await?;
-
-        MonStateTransfer::init_state_transfer_thread(state_tx, checkpoint_rx, st_config,
-                                                     node.clone(), inner_replica.timeouts.clone(),
-                                                     inner_replica.persistent_log.clone(), inner_handle);
-
-        let view = inner_replica.ordering_protocol.view();
+        MonStateTransfer
+            ::<<Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL> as PermissionedProtocolHandling<A::AppData, S, VT, OP, NT, PL>>::View,
+            S, NT, PL, ST>
+        ::init_state_transfer_thread(state_tx, checkpoint_rx, st_config,
+                                     node.clone(), inner_replica.timeouts.clone(),
+                                     inner_replica.persistent_log.clone(), inner_handle);
 
         let mut replica = Self {
             p: Default::default(),

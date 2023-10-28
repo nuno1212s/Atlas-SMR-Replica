@@ -53,22 +53,27 @@ pub struct StateTransferMngr<V, S, NT, PL, ST>
     phantom: PhantomData<(S, NT, PL)>,
 }
 
+pub fn init_state_transfer_handles<V, ST>() -> (StateTransferThreadHandle<V, ST>,
+                                                StateTransferThreadInnerHandle<V, ST>)
+    where V: NetworkView, ST: StateTransferMessage {
+    let (work_tx, work_rx) =
+        channel::new_bounded_sync(WORK_CHANNEL_SIZE, Some("State transfer Work Channel"));
+    let (response_tx, response_rx) =
+        channel::new_bounded_sync(RESPONSE_CHANNEL_SIZE, Some("State Transfer Response Channel"));
+
+    (StateTransferThreadHandle {
+        work_tx,
+        response_rx,
+    }, StateTransferThreadInnerHandle {
+        work_rx,
+        response_tx,
+    })
+}
+
+
 impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
     where ST: StateTransferProtocol<S, NT, PL>,
           V: NetworkView {
-    pub fn init_state_transfer_handles() -> (StateTransferThreadHandle<V, ST::Serialization>, StateTransferThreadInnerHandle<V, ST::Serialization>) {
-        let (work_tx, work_rx) = channel::new_bounded_sync(WORK_CHANNEL_SIZE, Some("State transfer Work Channel"));
-        let (response_tx, response_rx) = channel::new_bounded_sync(RESPONSE_CHANNEL_SIZE, Some("State Transfer Response Channel"));
-
-        (StateTransferThreadHandle {
-            work_tx,
-            response_rx,
-        }, StateTransferThreadInnerHandle {
-            work_rx,
-            response_tx,
-        })
-    }
-
     pub(crate) fn initialize_core_state_transfer(state_handle: StateTransferThreadInnerHandle<V, ST::Serialization>) -> Result<Self> {
         Ok(Self {
             handle: state_handle,
@@ -122,7 +127,6 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
                     }
                 }
                 StateTransferWorkMessage::Timeout(view, timeout) => {
-
                     self.handle_view(&view);
                 }
             }

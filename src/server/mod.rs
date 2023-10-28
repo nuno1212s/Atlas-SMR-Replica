@@ -112,7 +112,7 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     // reconfiguration protocol send
     reconf_tx: ChannelSyncTx<QuorumReconfigurationResponse>,
     // handle the state transfer handle
-    state_transfer_handle: StateTransferThreadHandle<<Self as PermissionedProtocolHandling<D, S, VT, OP, ST, NT, PL>>::View, ST::Serialization>,
+    state_transfer_handle: StateTransferThreadHandle<<Self as PermissionedProtocolHandling<D, S, VT, OP, NT, PL>>::View, ST::Serialization>,
     // Persistent log
     persistent_log: PL,
     // The reconfiguration protocol handle
@@ -153,7 +153,7 @@ pub trait ReconfigurableProtocolHandling {
 /// Trait with methods specific to reconfigurable protocol handle
 /// This is then combined with specialization in order to provide
 /// optional support for this type of protocols
-pub trait PermissionedProtocolHandling<D, S, VT, OP, ST, NT, PL>
+pub(crate) trait PermissionedProtocolHandling<D, S, VT, OP, NT, PL>
     where VT: ViewTransferProtocol<OP, NT>,
           D: ApplicationData {
     type View: NetworkView;
@@ -164,8 +164,7 @@ pub trait PermissionedProtocolHandling<D, S, VT, OP, ST, NT, PL>
         where NT: ViewTransferProtocolSendNode<VT::Serialization>;
 
     fn iterate_view_transfer_protocol(&mut self) -> Result<()>
-        where NT: ViewTransferProtocolSendNode<VT::Serialization>,
-              ST: StateTransferProtocol<S, NT, PL>;
+        where NT: ViewTransferProtocolSendNode<VT::Serialization>;
 
     fn handle_view_transfer_msg(&mut self, msg: StoredMessage<VTMsg<VT::Serialization>>) -> Result<()>
         where NT: ViewTransferProtocolSendNode<VT::Serialization>;
@@ -183,7 +182,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static,
         PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static, {
     async fn bootstrap(cfg: ReplicaConfig<RP, S, D, OP, DL, ST, LT, VT, NT, PL>,
-                       executor: ExecutorHandle<D>, state: StateTransferThreadHandle<<Self as PermissionedProtocolHandling<D, S, VT, OP, ST, NT, PL>>::View, ST::Serialization>) -> Result<Self> {
+                       executor: ExecutorHandle<D>, state: StateTransferThreadHandle<<Self as PermissionedProtocolHandling<D, S, VT, OP, NT, PL>>::View, ST::Serialization>) -> Result<Self> {
         let ReplicaConfig {
             id: log_node_id,
             n,
@@ -1136,7 +1135,7 @@ impl QuorumReconfig {
     }
 }
 
-impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT, OP, ST, NT, PL> for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT, OP, NT, PL> for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     where D: ApplicationData + 'static,
           OP: LoggableOrderProtocol<D, NT> + 'static,
           DL: DecisionLog<D, OP, NT, PL> + 'static,
@@ -1168,12 +1167,12 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
     }
 }
 
-impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT, OP, ST, NT, PL> for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT, OP, NT, PL> for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     where D: ApplicationData + 'static,
           OP: LoggableOrderProtocol<D, NT> + PermissionedOrderingProtocol + 'static,
           DL: DecisionLog<D, OP, NT, PL> + 'static,
           LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
-          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
+          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
           VT: ViewTransferProtocol<OP, NT> + 'static,
           PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           RP: ReconfigurationProtocol + 'static,
