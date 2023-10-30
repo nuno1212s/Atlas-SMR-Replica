@@ -92,11 +92,13 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 
     // The ordering protocol, responsible for ordering requests
     ordering_protocol: OP,
+    // The view transfer protocol, couple with the ordering protocol
+    view_transfer_protocol: VT,
     // The decision log protocol, responsible for keeping track of all of the
     // order protocol decisions that have been made
     decision_log: DL,
+    // The log transfer protocol that is currently in vigour
     log_transfer_protocol: LT,
-    view_transfer_protocol: VT,
     rq_pre_processor: RequestPreProcessor<D::Request>,
     timeouts: Timeouts,
     executor_handle: ExecutorHandle<D>,
@@ -1016,7 +1018,6 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         let view = self.view();
 
-
         self.state_transfer_handle.send_work_message(StateTransferWorkMessage::RequestLatestState(view.clone()));
         // Start by requesting the current state from neighbour replicas
         self.log_transfer_protocol.request_latest_log(&mut self.decision_log, view)?;
@@ -1071,6 +1072,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         self.quorum_reconfig_data.append_pending_node_join(node)
     }
 
+    /// Handles the quorum joined
     fn handle_quorum_joined(&mut self, node: NodeId, members: Vec<NodeId>) -> Result<()> {
         if node == self.id() {
             info!("{:?} // We have joined the quorum, responding to the reconfiguration protocol", self.id());
@@ -1117,6 +1119,28 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         Ok(())
     }
+
+    /// Handle the previous phase
+    ///
+    fn handle_previous_phase(&mut self, phase: ReplicaPhase<D::Request>) -> Result<()> {
+        match phase {
+            ReplicaPhase::TransferProtocol { state_transfer, log_transfer } => {
+                self.run_all_state_transfer()?;
+            }
+            ReplicaPhase::OrderingProtocol(op) => {
+                match op {
+                    OPPhase::OrderProtocol => {
+                        self.run_ordering_protocol()?;
+                    }
+                    OPPhase::ViewTransferProtocol(_) => {
+                        self.run_view_transfer()?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl QuorumReconfig {
@@ -1153,6 +1177,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
 
     default fn run_view_transfer(&mut self) -> Result<Option<ReplicaPhase<D::Request>>>
         where NT: ViewTransferProtocolSendNode<VT::Serialization> {
+        info!("Running the default view transfer protocol, where there actually is no view transfer");
+
         Ok(Some(self.replica_phase.clone()))
     }
 
@@ -1177,7 +1203,6 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
           PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           RP: ReconfigurationProtocol + 'static,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
-
     type View = View<OP::PermissionedSerialization>;
 
     fn view(&self) -> Self::View {
@@ -1186,6 +1211,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
 
     fn run_view_transfer(&mut self) -> Result<Option<ReplicaPhase<D::Request>>>
         where NT: ViewTransferProtocolSendNode<VT::Serialization> {
+        info!("Running view transfer protocol on the replica");
+
         let phase = std::mem::replace(&mut self.replica_phase, ReplicaPhase::OrderingProtocol(OPPhase::ViewTransferProtocol(None)));
 
         let to_return = match &phase {
@@ -1202,6 +1229,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
                 ReplicaPhase::OrderingProtocol(op) => {
                     match op {
                         OPPhase::ViewTransferProtocol(some) => {
+                            info!("Inserting previous replica phase as {:?}", phase);
+
                             let _ = some.insert(phase);
                         }
                         _ => unreachable!()
@@ -1219,6 +1248,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
     fn iterate_view_transfer_protocol(&mut self) -> Result<()>
         where NT: ViewTransferProtocolSendNode<VT::Serialization>,
               ST: StateTransferProtocol<S, NT, PL> {
+        debug!("Iterating view transfer protocol.");
+
         match self.view_transfer_protocol.poll()? {
             VTPollResult::RePoll => {}
             VTPollResult::Exec(msg) => {
@@ -1271,7 +1302,30 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
                     }
                 }
             }
-            VTPollResult::VTResult(res) => {}
+            VTPollResult::VTResult(res) => {
+                match res {
+                    VTResult::RunVTP => {}
+                    VTResult::VTransferNotNeeded => {}
+                    VTResult::VTransferRunning => {}
+                    VTResult::VTransferFinished => {
+                        match &self.replica_phase {
+                            ReplicaPhase::OrderingProtocol(op) => {
+                                match op {
+                                    OPPhase::ViewTransferProtocol(previous) => {
+                                        if let Some(replica) = previous {
+                                            self.handle_previous_phase((**replica).clone())?;
+                                        } else {
+                                            self.run_ordering_protocol()?;
+                                        }
+                                    }
+                                    _ => unreachable!()
+                                }
+                            }
+                            _ => unreachable!()
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -1279,6 +1333,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
 
     fn handle_view_transfer_msg(&mut self, message: StoredMessage<VTMsg<VT::Serialization>>) -> Result<()>
         where NT: ViewTransferProtocolSendNode<VT::Serialization> {
+        debug!("Handling the view transfer message {:?}", message);
+
         match &self.replica_phase {
             ReplicaPhase::OrderingProtocol(op_phase) => {
                 match op_phase {
@@ -1293,7 +1349,9 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
                             VTResult::VTransferNotNeeded => {}
                             VTResult::VTransferRunning => {}
                             VTResult::VTransferFinished => {
-                                if let Some(protocol_stack) = prev {} else {
+                                if let Some(protocol_stack) = prev {
+                                    self.handle_previous_phase((**protocol_stack).clone())?;
+                                } else {
                                     self.run_ordering_protocol()?;
                                 }
                             }
