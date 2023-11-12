@@ -20,7 +20,7 @@ pub enum StateTransferWorkMessage<V, ST> where V: NetworkView {
     RequestLatestState(V),
     StateTransferMessage(V, StoredMessage<ST>),
     Timeout(V, Vec<RqTimeout>),
-    ShouldRequestAppState(V, SeqNo, OneShotTx<ExecutionResult>),
+    ShouldRequestAppState(SeqNo, OneShotTx<ExecutionResult>),
 }
 
 /// Response message of the state transfer protocol
@@ -103,9 +103,8 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
     pub fn iterate(&mut self, state_transfer: &mut ST) -> Result<()> {
         while let Ok(work) = self.handle.work_rx.try_recv() {
             match work {
-                StateTransferWorkMessage::ShouldRequestAppState(view, seq, response) => {
-                    self.handle_view(&view);
-                    Self::should_request_app_state(view, seq, state_transfer, response)
+                StateTransferWorkMessage::ShouldRequestAppState(seq, response) => {
+                    Self::should_request_app_state(seq, state_transfer, response)
                 }
                 StateTransferWorkMessage::RequestLatestState(view) => {
                     self.currently_running = true;
@@ -160,8 +159,8 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
         let _ = state_transfer.request_latest_state(view);
     }
 
-    fn should_request_app_state(view: V, seq: SeqNo, state_transfer: &mut ST, result: OneShotTx<ExecutionResult>) {
-        let appstate_res = state_transfer.handle_app_state_requested(view, seq);
+    fn should_request_app_state(seq: SeqNo, state_transfer: &mut ST, result: OneShotTx<ExecutionResult>) {
+        let appstate_res = state_transfer.handle_app_state_requested(seq);
 
         if let Ok(appstate) = appstate_res {
             let _ = result.send(appstate);

@@ -44,6 +44,7 @@ use atlas_smr_application::serialize::ApplicationData;
 use crate::config::ReplicaConfig;
 use crate::metric::{LOG_TRANSFER_PROCESS_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, REPLICA_TAKE_FROM_NETWORK_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
 use crate::persistent_log::SMRPersistentLog;
+use crate::server::decision_log::{DecisionLogHandle, DLWorkMessage, DLWorkMessageType, LogTransferWorkMessage};
 use crate::server::state_transfer::{StateTransferProgress, StateTransferThreadHandle, StateTransferWorkMessage};
 
 pub mod client_replier;
@@ -51,6 +52,7 @@ pub mod follower_handling;
 pub mod monolithic_server;
 pub mod divisible_state_server;
 pub mod state_transfer;
+mod decision_log;
 // pub mod rq_finalizer;
 
 const REPLICA_MESSAGE_CHANNEL: usize = 1024;
@@ -76,6 +78,41 @@ pub(crate) enum OPPhase<R> {
     ViewTransferProtocol(Option<Box<ReplicaPhase<R>>>),
 }
 
+/// The current phase of the order protocol phase
+#[derive(Clone)]
+pub(crate) enum ExecutionPhase {
+    OrderProtocol,
+    ViewTransferProtocol,
+}
+
+/// The current state of the transfer protocol
+#[derive(Clone)]
+pub(crate) enum TransferPhase {
+    NotRunning,
+    RunningTransferProtocols {
+        state_transfer: StateTransferState,
+        log_transfer: LogTransferState,
+    },
+}
+
+/// The current State Transfer state
+#[derive(Clone)]
+pub(crate) enum StateTransferState {
+    Idle,
+    Running,
+    Done(SeqNo),
+}
+
+/// The current state of the log transfer
+#[derive(Clone)]
+pub(crate) enum LogTransferState {
+    Idle,
+    Running,
+    Done(SeqNo, SeqNo),
+}
+
+type ViewType<D, S, VT, OP, NT, PL, R: PermissionedProtocolHandling<D, S, VT, OP, NT, PL>> = <R as PermissionedProtocolHandling<D, S, VT, OP, NT, PL>>::View;
+
 pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     where D: ApplicationData + 'static,
           OP: LoggableOrderProtocol<D, NT> + 'static,
@@ -88,6 +125,9 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     replica_phase: ReplicaPhase<D::Request>,
 
+    execution_state: ExecutionPhase,
+    transfer_states: TransferPhase,
+
     quorum_reconfig_data: QuorumReconfig,
 
     // The ordering protocol, responsible for ordering requests
@@ -99,6 +139,9 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     decision_log: DL,
     // The log transfer protocol that is currently in vigour
     log_transfer_protocol: LT,
+    // The handle to communicate with the decision log thread.
+    decision_log_handle: DecisionLogHandle<ViewType<D, S, VT, OP, NT, PL, Self>, D, OP::Serialization, OP::PersistableTypes, LT::Serialization>,
+    // The pre processor handle to the decision log
     rq_pre_processor: RequestPreProcessor<D::Request>,
     timeouts: Timeouts,
     executor_handle: ExecutorHandle<D>,
@@ -108,13 +151,12 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     execution: (ChannelSyncRx<Message>, ChannelSyncTx<Message>),
     // The handle for processed timeouts
     processed_timeout: (ChannelSyncTx<(Vec<RqTimeout>, Vec<RqTimeout>)>, ChannelSyncRx<(Vec<RqTimeout>, Vec<RqTimeout>)>),
-
     // Receive reconfiguration messages from the reconfiguration protocol
     reconf_receive: ChannelSyncRx<QuorumReconfigurationMessage>,
     // reconfiguration protocol send
     reconf_tx: ChannelSyncTx<QuorumReconfigurationResponse>,
     // handle the state transfer handle
-    state_transfer_handle: StateTransferThreadHandle<<Self as PermissionedProtocolHandling<D, S, VT, OP, NT, PL>>::View, ST::Serialization>,
+    state_transfer_handle: StateTransferThreadHandle<ViewType<D, S, VT, OP, NT, PL, Self>, ST::Serialization>,
     // Persistent log
     persistent_log: PL,
     // The reconfiguration protocol handle
@@ -705,7 +747,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
                 let (e_tx, e_rx) = channel::new_oneshot_channel();
 
-                self.state_transfer_handle.send_work_message(StateTransferWorkMessage::ShouldRequestAppState(self.view(), seq, e_tx));
+                self.state_transfer_handle.send_work_message(StateTransferWorkMessage::ShouldRequestAppState(seq, e_tx));
 
                 if let Ok(res) = e_rx.recv() {
                     res
@@ -987,6 +1029,63 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                 }
             }
         }
+
+        Ok(())
+    }
+
+    /// Run both the transfer protocols
+    fn run_transfer_protocols(&mut self) -> Result<()> {
+        self.transfer_states = TransferPhase::RunningTransferProtocols {
+            state_transfer: StateTransferState::Running,
+            log_transfer: LogTransferState::Running,
+        };
+
+        self.state_transfer_handle.send_work_message(StateTransferWorkMessage::RequestLatestState(self.view()));
+        self.decision_log_handle.send_work(DLWorkMessage::init_log_transfer_message(self.view(), LogTransferWorkMessage::RequestLogTransfer));
+
+        Ok(())
+    }
+
+    fn run_state_transfer_protocol_v2(&mut self) -> Result<()> {
+        let state = std::mem::replace(&mut self.transfer_states, TransferPhase::NotRunning);
+
+        self.transfer_states = match state {
+            TransferPhase::NotRunning => {
+                TransferPhase::RunningTransferProtocols {
+                    state_transfer: StateTransferState::Running,
+                    log_transfer: LogTransferState::Idle,
+                }
+            }
+            TransferPhase::RunningTransferProtocols { log_transfer, .. } => {
+                TransferPhase::RunningTransferProtocols {
+                    state_transfer: StateTransferState::Running,
+                    log_transfer,
+                }
+            }
+        };
+
+        self.state_transfer_handle.send_work_message(StateTransferWorkMessage::RequestLatestState(self.view()));
+
+        Ok(())
+    }
+
+    fn run_log_transfer_protocol_v2(&mut self) -> Result<()> {
+        let state = std::mem::replace(&mut self.transfer_states, TransferPhase::NotRunning);
+
+        self.transfer_states = match state {
+            TransferPhase::NotRunning => TransferPhase::RunningTransferProtocols {
+                state_transfer: StateTransferState::Idle,
+                log_transfer: LogTransferState::Running,
+            },
+            TransferPhase::RunningTransferProtocols { state_transfer, .. } => {
+                TransferPhase::RunningTransferProtocols {
+                    state_transfer,
+                    log_transfer: LogTransferState::Running,
+                }
+            }
+        };
+
+        self.decision_log_handle.send_work(DLWorkMessage::init_log_transfer_message(self.view(), LogTransferWorkMessage::RequestLogTransfer));
 
         Ok(())
     }
