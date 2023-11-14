@@ -44,7 +44,7 @@ use atlas_smr_application::serialize::ApplicationData;
 use crate::config::ReplicaConfig;
 use crate::metric::{LOG_TRANSFER_PROCESS_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, REPLICA_TAKE_FROM_NETWORK_ID, STATE_TRANSFER_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID};
 use crate::persistent_log::SMRPersistentLog;
-use crate::server::decision_log::{DecisionLogHandle, DLWorkMessage, DLWorkMessageType, LogTransferWorkMessage};
+use crate::server::decision_log::{DecisionLogHandle, DecisionLogManager, DecisionLogWorkMessage, DLWorkMessage, DLWorkMessageType, LogTransferWorkMessage, ReplicaWorkResponses};
 use crate::server::state_transfer::{StateTransferProgress, StateTransferThreadHandle, StateTransferWorkMessage};
 
 pub mod client_replier;
@@ -58,35 +58,15 @@ mod decision_log;
 const REPLICA_MESSAGE_CHANNEL: usize = 1024;
 pub const REPLICA_WAIT_TIME: Duration = Duration::from_millis(1000);
 
-pub type StateTransferDone = Option<SeqNo>;
-pub type LogTransferDone<R> = Option<(SeqNo, SeqNo, MaybeVec<LoggedDecision<R>>)>;
-
-#[derive(Clone)]
-pub(crate) enum ReplicaPhase<R> {
-    // The replica is currently executing the ordering protocol
-    OrderingProtocol(OPPhase<R>),
-    // The replica is currently executing the state transfer protocol
-    TransferProtocol {
-        state_transfer: StateTransferDone,
-        log_transfer: LogTransferDone<R>,
-    },
-}
-
-#[derive(Clone)]
-pub(crate) enum OPPhase<R> {
-    OrderProtocol,
-    ViewTransferProtocol(Option<Box<ReplicaPhase<R>>>),
-}
-
 /// The current phase of the order protocol phase
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum ExecutionPhase {
     OrderProtocol,
     ViewTransferProtocol,
 }
 
 /// The current state of the transfer protocol
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum TransferPhase {
     NotRunning,
     RunningTransferProtocols {
@@ -96,7 +76,7 @@ pub(crate) enum TransferPhase {
 }
 
 /// The current State Transfer state
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum StateTransferState {
     Idle,
     Running,
@@ -104,7 +84,7 @@ pub(crate) enum StateTransferState {
 }
 
 /// The current state of the log transfer
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum LogTransferState {
     Idle,
     Running,
@@ -123,8 +103,6 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
           PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           RP: ReconfigurationProtocol + 'static,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
-    replica_phase: ReplicaPhase<D::Request>,
-
     execution_state: ExecutionPhase,
     transfer_states: TransferPhase,
 
@@ -134,11 +112,6 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     ordering_protocol: OP,
     // The view transfer protocol, couple with the ordering protocol
     view_transfer_protocol: VT,
-    // The decision log protocol, responsible for keeping track of all of the
-    // order protocol decisions that have been made
-    decision_log: DL,
-    // The log transfer protocol that is currently in vigour
-    log_transfer_protocol: LT,
     // The handle to communicate with the decision log thread.
     decision_log_handle: DecisionLogHandle<ViewType<D, S, VT, OP, NT, PL, Self>, D, OP::Serialization, OP::PersistableTypes, LT::Serialization>,
     // The pre processor handle to the decision log
@@ -162,7 +135,7 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     // The reconfiguration protocol handle
     reconfig_protocol: RP,
 
-    st: PhantomData<(S, ST)>,
+    st: PhantomData<(S, ST, DL, LT)>,
 }
 
 /// This is used to keep track of the node that is currently
@@ -200,11 +173,11 @@ pub trait ReconfigurableProtocolHandling {
 pub(crate) trait PermissionedProtocolHandling<D, S, VT, OP, NT, PL>
     where VT: ViewTransferProtocol<OP, NT>,
           D: ApplicationData {
-    type View: NetworkView;
+    type View: NetworkView + 'static;
 
     fn view(&self) -> Self::View;
 
-    fn run_view_transfer(&mut self) -> Result<Option<ReplicaPhase<D::Request>>>
+    fn run_view_transfer(&mut self) -> Result<()>
         where NT: ViewTransferProtocolSendNode<VT::Serialization>;
 
     fn iterate_view_transfer_protocol(&mut self) -> Result<()>
@@ -310,31 +283,28 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                                            batch_input, node.clone(),
                                            quorum.clone());
 
-        let decision_log = DL::initialize_decision_log(dl_config, persistent_log.clone(), executor.clone())?;
+        let decision_handle = DecisionLogManager
+            ::<ViewType<D, S, VT, OP, NT, PL, Self>, D, OP, DL, LT, ST::Serialization, NT, PL>
+        ::initialize_decision_log_mngt(dl_config, lt_config, persistent_log.clone(), timeouts.clone(), node.clone(),
+                                       rq_pre_processor.clone(), state.clone(), executor.clone())?;
+
 
         let ordering_protocol = OP::initialize(op_config, op_args)?;
 
         let view_transfer_protocol = VT::initialize_view_transfer_protocol(vt_config, node.clone(), quorum.clone())?;
 
-        let log_transfer_protocol = LT::initialize(lt_config, timeouts.clone(), node.clone(), persistent_log.clone())?;
 
         info!("{:?} // Finished bootstrapping node.", log_node_id);
 
         let timeout_channel = channel::new_bounded_sync(1024, Some("SMR Timeout work channel"));
 
-        let state_transfer = ReplicaPhase::TransferProtocol {
-            state_transfer: None,
-            log_transfer: None,
-        };
-
         let mut replica = Self {
-// We start with the state transfer protocol to make sure everything is up to date
-            replica_phase: state_transfer,
+            execution_state: ExecutionPhase::ViewTransferProtocol,
+            transfer_states: TransferPhase::NotRunning,
             quorum_reconfig_data: QuorumReconfig { node_pending_join: None },
             ordering_protocol,
-            decision_log,
-            log_transfer_protocol,
             view_transfer_protocol,
+            decision_log_handle: decision_handle,
             rq_pre_processor,
             timeouts,
             executor_handle: executor,
@@ -359,39 +329,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
     fn bootstrap_protocols(&mut self) -> Result<()> {
         info!("{:?} // Bootstrapping SMR Replica protocols", self.id());
 
-        self.replica_phase = ReplicaPhase::TransferProtocol {
-            state_transfer: None,
-            log_transfer: None,
-        };
-
-        // We start with the (optional) view transfer.
-        // If it returns false (no view transfer is required), then we will
-        // Immediately proceed to the state transfer/log transfer protocols
-        if let Some(phase) = self.run_view_transfer()? {
-            self.handle_pending_phase(phase)?;
-        }
-
-        Ok(())
-    }
-
-    fn handle_pending_phase(&mut self, phase: ReplicaPhase<D::Request>) -> Result<()> {
-        self.replica_phase = phase;
-
-        match &self.replica_phase {
-            ReplicaPhase::OrderingProtocol(op_phase) => {
-                match op_phase {
-                    OPPhase::OrderProtocol => {
-                        self.ordering_protocol.handle_execution_changed(true)?;
-                    }
-                    OPPhase::ViewTransferProtocol(_) => {
-                        self.run_view_transfer()?;
-                    }
-                }
-            }
-            ReplicaPhase::TransferProtocol { .. } => {
-                self.run_all_state_transfer()?;
-            }
-        }
+        self.run_view_transfer()?;
+        self.run_transfer_protocols()?;
 
         Ok(())
     }
@@ -403,124 +342,11 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         metric_duration(REPLICA_INTERNAL_PROCESS_TIME_ID, now.elapsed());
 
-        match &self.replica_phase {
-            ReplicaPhase::OrderingProtocol(opphase) => {
-                self.run_ordering_phase(opphase.clone())
+        match self.execution_state {
+            ExecutionPhase::OrderProtocol => {
+                self.run_order_protocol()?;
             }
-            ReplicaPhase::TransferProtocol { state_transfer: st_transfer_done, log_transfer: log_transfer_done } => {
-                self.run_st_phase(st_transfer_done.clone(), log_transfer_done.clone())
-            }
-        }
-    }
-
-    fn run_ordering_phase(&mut self, op_phase: OPPhase<D::Request>) -> Result<()> {
-        match op_phase {
-            OPPhase::OrderProtocol => {
-                let poll_res = self.ordering_protocol.poll()?;
-
-                trace!("{:?} // Polling ordering protocol with result {:?}", NetworkNode::id(&*self.node), poll_res);
-
-                match poll_res {
-                    OPPollResult::RePoll => {}
-                    OPPollResult::RunCst => {
-                        self.run_all_state_transfer()?;
-                    }
-                    OPPollResult::ReceiveMsg => {
-                        let start = Instant::now();
-
-                        let network_message = self.node.node_incoming_rq_handling().receive_from_replicas(Some(REPLICA_WAIT_TIME)).unwrap();
-
-                        metric_duration(REPLICA_TAKE_FROM_NETWORK_ID, start.elapsed());
-
-                        if let Some(network_message) = network_message {
-                            let (header, message) = network_message.into_inner();
-
-                            match message {
-                                SystemMessage::ProtocolMessage(protocol) => {
-                                    let message = Arc::new(ReadOnly::new(StoredMessage::new(header, protocol.into_inner())));
-
-                                    self.execute_order_protocol_message(message)?;
-                                }
-                                SystemMessage::ViewTransferMessage(view_transfer) => {
-                                    let strd_msg = StoredMessage::new(header, view_transfer.into_inner());
-
-                                    self.handle_view_transfer_msg(strd_msg)?;
-                                }
-                                SystemMessage::StateTransferMessage(state_transfer_msg) => {
-                                    let strd_message = StoredMessage::new(header, state_transfer_msg.into_inner());
-
-                                    self.state_transfer_handle.send_work_message(StateTransferWorkMessage::StateTransferMessage(self.view(), strd_message));
-                                }
-                                SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
-// Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
-                                    self.rq_pre_processor.send(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
-                                }
-                                SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
-                                    let message = fwd_protocol.into_inner();
-
-                                    let (header, message) = message.into_inner();
-
-                                    let message = Arc::new(ReadOnly::new(StoredMessage::new(header, message.into_inner())));
-
-                                    self.execute_order_protocol_message(message)?;
-                                }
-                                SystemMessage::LogTransferMessage(log_transfer) => {
-                                    let strd_msg = StoredMessage::new(header, log_transfer.into_inner());
-
-                                    let view = self.view();
-
-                                    self.log_transfer_protocol.handle_off_ctx_message(&mut self.decision_log, view,
-                                                                                      strd_msg).unwrap();
-                                }
-                                _ => {
-                                    error!("{:?} // Received unsupported message {:?}", NetworkNode::id(&*self.node), message);
-                                }
-                            }
-                        } else {
-                            // Receive timeouts in the beginning of the next iteration
-                            return Ok(());
-                        }
-                    }
-                    OPPollResult::Exec(message) => {
-                        self.execute_order_protocol_message(message)?;
-                    }
-                    OPPollResult::ProgressedDecision(clear_ahead, decision) => {
-                        match clear_ahead {
-                            DecisionsAhead::Ignore => {}
-                            DecisionsAhead::ClearAhead => {
-                                self.clear_currently_executing()?;
-                            }
-                        }
-
-                        for decision_information in decision.into_iter() {
-                            let received_info = self.decision_log.decision_information_received(decision_information)?;
-
-                            self.execute_logged_decisions(received_info)?;
-                        }
-                    }
-                    OPPollResult::QuorumJoined(clear_ahead, decision, join_info) => {
-                        match clear_ahead {
-                            DecisionsAhead::Ignore => {}
-                            DecisionsAhead::ClearAhead => {
-                                self.clear_currently_executing()?;
-                            }
-                        }
-
-                        let (node_id, quorum) = join_info.into_inner();
-
-                        self.handle_quorum_joined(node_id, quorum)?;
-
-                        if let Some(decision) = decision {
-                            for decision in decision.into_iter() {
-                                let received_info = self.decision_log.decision_information_received(decision)?;
-
-                                self.execute_logged_decisions(received_info)?;
-                            }
-                        }
-                    }
-                }
-            }
-            OPPhase::ViewTransferProtocol(_) => {
+            ExecutionPhase::ViewTransferProtocol => {
                 self.iterate_view_transfer_protocol()?;
             }
         }
@@ -528,120 +354,127 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         Ok(())
     }
 
-    /// Runs the state transfer protocol side of the SMR
-    fn run_st_phase(&mut self, st_transfer_done: StateTransferDone, log_transfer_done: LogTransferDone<D::Request>) -> Result<()> {
-        let lt_res = if !Self::is_log_transfer_done(&log_transfer_done) {
-            match self.log_transfer_protocol.poll()? {
-                LTPollResult::ReceiveMsg => {
-                    LTPollRes::Receive
-                }
-                LTPollResult::RePoll => {
+    fn run_order_protocol(&mut self) -> Result<()> {
+        let poll_result = self.ordering_protocol.poll()?;
+
+        match poll_result {
+            OPPollResult::RePoll => {}
+            OPPollResult::RunCst => {
+                self.run_transfer_protocols()?;
+            }
+            OPPollResult::ReceiveMsg => {
+                let start = Instant::now();
+
+                let network_message = self.node.node_incoming_rq_handling().receive_from_replicas(Some(REPLICA_WAIT_TIME)).unwrap();
+
+                metric_duration(REPLICA_TAKE_FROM_NETWORK_ID, start.elapsed());
+
+                if let Some(network_message) = network_message {
+                    let (header, message) = network_message.into_inner();
+
+                    match message {
+                        SystemMessage::ProtocolMessage(protocol) => {
+                            let message = Arc::new(ReadOnly::new(StoredMessage::new(header, protocol.into_inner())));
+
+                            self.execute_order_protocol_message(message)?;
+                        }
+                        SystemMessage::ViewTransferMessage(view_transfer) => {
+                            let strd_msg = StoredMessage::new(header, view_transfer.into_inner());
+
+                            self.handle_view_transfer_msg(strd_msg)?;
+                        }
+                        SystemMessage::StateTransferMessage(state_transfer_msg) => {
+                            let strd_message = StoredMessage::new(header, state_transfer_msg.into_inner());
+
+                            self.state_transfer_handle.send_work_message(StateTransferWorkMessage::StateTransferMessage(self.view(), strd_message));
+                        }
+                        SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
+// Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
+                            self.rq_pre_processor.send(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
+                        }
+                        SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
+                            let message = fwd_protocol.into_inner();
+
+                            let (header, message) = message.into_inner();
+
+                            let message = Arc::new(ReadOnly::new(StoredMessage::new(header, message.into_inner())));
+
+                            self.execute_order_protocol_message(message)?;
+                        }
+                        SystemMessage::LogTransferMessage(log_transfer) => {
+                            let strd_msg = StoredMessage::new(header, log_transfer.into_inner());
+
+                            let view = self.view();
+
+                            self.decision_log_handle.send_work(DLWorkMessage::init_log_transfer_message(view, LogTransferWorkMessage::LogTransferMessage(strd_msg)));
+                        }
+                        _ => {
+                            error!("{:?} // Received unsupported message {:?}", NetworkNode::id(&*self.node), message);
+                        }
+                    }
+                } else {
+                    // Receive timeouts in the beginning of the next iteration
                     return Ok(());
                 }
-                LTPollResult::LTResult(res) => {
-                    self.handle_log_transfer_result(res)?;
-
-                    LTPollRes::Continue
-                }
-                LTPollResult::Exec(message) => {
-                    let view = self.view();
-
-                    let res = self.log_transfer_protocol.process_message(&mut self.decision_log,
-                                                                         view, message)?;
-
-                    self.handle_log_transfer_result(res)?;
-                    LTPollRes::Continue
-                }
             }
-        } else { LTPollRes::None };
-
-        let st_res = if !Self::is_state_transfer_done(&st_transfer_done) {
-            if let Some(update) = self.state_transfer_handle.try_recv_state_transfer_update() {
-                match update {
-                    StateTransferProgress::StateTransferProgress(progress) => {
-                        self.handle_state_transfer_result(progress)?;
-                    }
-                    StateTransferProgress::CheckpointReceived(seq) => {
-                        self.decision_log.state_checkpoint(seq)?;
+            OPPollResult::Exec(message) => {
+                self.execute_order_protocol_message(message)?;
+            }
+            OPPollResult::ProgressedDecision(clear_ahead, decision) => {
+                match clear_ahead {
+                    DecisionsAhead::Ignore => {}
+                    DecisionsAhead::ClearAhead => {
+                        self.clear_currently_executing()?;
                     }
                 }
+
+                let dec_log_msg = DLWorkMessage::init_dec_log_message(self.view(), DecisionLogWorkMessage::DecisionInformation(decision));
+
+                self.decision_log_handle.send_work(dec_log_msg);
             }
-
-            STPollRes::Receive
-        } else { STPollRes::None };
-
-        match (lt_res, st_res) {
-            (LTPollRes::Continue, _) | (_, STPollRes::Continue) => {
-                return Ok(());
-            }
-            (_, _) => {}
-        };
-
-        let message = self.node.node_incoming_rq_handling().receive_from_replicas(Some(REPLICA_WAIT_TIME)).unwrap();
-
-        if let Some(message) = message {
-            let (header, message) = message.into_inner();
-
-            match message {
-                SystemMessage::ProtocolMessage(protocol) => {
-                    let shareable_message = Arc::new(ReadOnly::new(StoredMessage::new(header, protocol.into_inner())));
-
-                    self.ordering_protocol.handle_off_ctx_message(shareable_message);
+            OPPollResult::QuorumJoined(clear_ahead, decision, join_info) => {
+                match clear_ahead {
+                    DecisionsAhead::Ignore => {}
+                    DecisionsAhead::ClearAhead => {
+                        self.clear_currently_executing()?;
+                    }
                 }
-                SystemMessage::ViewTransferMessage(view_transfer) => {
-                    let strd_msg = StoredMessage::new(header, view_transfer.into_inner());
 
-                    self.handle_view_transfer_msg(strd_msg)?;
+                let (node_id, quorum) = join_info.into_inner();
+
+                self.handle_quorum_joined(node_id, quorum)?;
+
+                if let Some(decision) = decision {
+                    let dec_log_msg = DLWorkMessage::init_dec_log_message(self.view(), DecisionLogWorkMessage::DecisionInformation(decision));
+
+                    self.decision_log_handle.send_work(dec_log_msg);
                 }
-                SystemMessage::StateTransferMessage(state_transfer_msg) => {
-                    let start = Instant::now();
-
-                    let strd_message = StoredMessage::new(header, state_transfer_msg.into_inner());
-
-                    self.state_transfer_handle.send_work_message(StateTransferWorkMessage::StateTransferMessage(self.view(), strd_message));
-
-                    metric_duration(STATE_TRANSFER_PROCESS_TIME_ID, start.elapsed());
-                }
-                SystemMessage::LogTransferMessage(log_transfer) => {
-                    let start = Instant::now();
-
-                    let message = StoredMessage::new(header, log_transfer.into_inner());
-
-                    let view = self.view();
-
-                    let result = self.log_transfer_protocol.process_message(&mut self.decision_log, view, message)?;
-
-                    self.handle_log_transfer_result(result)?;
-
-                    metric_duration(LOG_TRANSFER_PROCESS_TIME_ID, start.elapsed());
-                }
-                _ => {}
             }
         }
 
         Ok(())
     }
 
-    fn handle_log_transfer_result(&mut self, result: LTResult<D>) -> Result<()> {
-        match result {
-            LTResult::RunLTP => {
-                self.run_log_transfer_protocol()?;
+    fn poll_other_protocols(&mut self) -> Result<()> {
+        while let Some(state_result) = self.state_transfer_handle.try_recv_state_transfer_update() {
+            match state_result {
+                StateTransferProgress::StateTransferProgress(progress) => {
+                    self.handle_state_transfer_result(progress)?;
+                }
+                StateTransferProgress::CheckpointReceived(checkpoint) => {
+                    self.decision_log_handle.send_work(DLWorkMessage::init_dec_log_message(self.view(), DecisionLogWorkMessage::CheckpointDone(checkpoint)));
+                }
             }
-            LTResult::Running => {}
-            LTResult::NotNeeded => {
-                let log = self.decision_log.current_log()?;
+        }
 
-                self.log_transfer_protocol_done(log.first_seq().unwrap_or(SeqNo::ZERO), log.sequence_number(), MaybeVec::None)?;
-            }
-            LTResult::LTPFinished(first_seq, last_seq, requests_to_execute) => {
-                info!("{:?} // Log transfer finished. Installed log into decision log and received requests", NetworkNode::id(&*self.node));
-
-                self.log_transfer_protocol_done(first_seq, last_seq, requests_to_execute)?;
-            }
-            LTResult::InstallSeq(seq) => {
-                info!("{:?} // Log transfer protocol indicated Sequence number, installing it into the ordering protocol", NetworkNode::id(&*self.node));
-
-                self.ordering_protocol.install_seq_no(seq)?;
+        while let Some(dec_log_res) = self.decision_log_handle.try_to_recv_resp() {
+            match dec_log_res {
+                ReplicaWorkResponses::InstallSeqNo(seq_no) => {
+                    self.ordering_protocol.install_seq_no(seq_no)?;
+                }
+                ReplicaWorkResponses::LogTransferFinalized(first_seq, last_seq) => {
+                    self.handle_log_transfer_done(first_seq, last_seq)?;
+                }
             }
         }
 
@@ -655,18 +488,70 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                 self.executor_handle.poll_state_channel()?;
             }
             STResult::StateTransferFinished(seq_no) => {
-                info!("{:?} // State transfer finished. Installing state in executor and running ordering protocol", NetworkNode::id(&*self.node));
+                info!("{:?} // State transfer finished. Registering result and comparing with log transfer result", NetworkNode::id(&*self.node));
 
                 self.executor_handle.poll_state_channel()?;
 
-                self.state_transfer_protocol_done(seq_no)?;
+                self.handle_state_transfer_done(seq_no)?;
             }
             STResult::StateTransferNotNeeded(curr_seq) => {
-                self.state_transfer_protocol_done(curr_seq)?;
+                self.handle_state_transfer_done(curr_seq)?;
             }
             STResult::RunStateTransfer => {
                 self.run_state_transfer_protocol()?;
             }
+        }
+
+        Ok(())
+    }
+
+    /// Handles receiving the log transfer finalized
+    fn handle_log_transfer_done(&mut self, initial_seq: SeqNo, last_seq: SeqNo) -> Result<()> {
+        let prev_state = std::mem::replace(&mut self.transfer_states, TransferPhase::NotRunning);
+
+        self.transfer_states = match prev_state {
+            TransferPhase::NotRunning => {
+                unreachable!("How can we have finished the log transfer result when we are not running transfer protocols")
+            }
+            TransferPhase::RunningTransferProtocols { log_transfer, state_transfer } => {
+                match log_transfer {
+                    LogTransferState::Idle => unreachable!("Received result of the log transfer while not running it?"),
+                    _ => {}
+                }
+
+                TransferPhase::RunningTransferProtocols { state_transfer, log_transfer: LogTransferState::Done(initial_seq, last_seq) }
+            }
+        };
+
+        // We know that the log transfer is already done, so if the state transfer is done then they are both done
+        if Self::is_state_transfer_done(&self.transfer_states) {
+            self.finish_transfer()?;
+        }
+
+        Ok(())
+    }
+
+    /// Handles receiving the state transfer state
+    fn handle_state_transfer_done(&mut self, seq: SeqNo) -> Result<()> {
+        let prev_state = std::mem::replace(&mut self.transfer_states, TransferPhase::NotRunning);
+
+        self.transfer_states = match prev_state {
+            TransferPhase::NotRunning => {
+                unreachable!("How can we have finished the log transfer result when we are not running transfer protocols")
+            }
+            TransferPhase::RunningTransferProtocols { log_transfer, state_transfer } => {
+                match log_transfer {
+                    LogTransferState::Idle => unreachable!("Received result of the log transfer while not running it?"),
+                    _ => {}
+                }
+
+                TransferPhase::RunningTransferProtocols { log_transfer, state_transfer: StateTransferState::Done(seq) }
+            }
+        };
+
+        // We know that the state transfer is already done, so if the log transfer is also done, then they are both done
+        if Self::is_log_transfer_done(&self.transfer_states) {
+            self.finish_transfer()?;
         }
 
         Ok(())
@@ -691,11 +576,9 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                     }
                 }
 
-                for decision_information in decision.into_iter() {
-                    let decision_info = self.decision_log.decision_information_received(decision_information)?;
+                let dec_log_work = DLWorkMessage::init_dec_log_message(self.view(), DecisionLogWorkMessage::DecisionInformation(decision));
 
-                    self.execute_logged_decisions(decision_info)?;
-                }
+                self.decision_log_handle.send_work(dec_log_work);
             }
             OPExecResult::QuorumJoined(clear_decisions, decision, quorum) => {
                 match clear_decisions {
@@ -710,15 +593,13 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                 self.handle_quorum_joined(node_id, quorum)?;
 
                 if let Some(decision) = decision {
-                    for decision in decision.into_iter() {
-                        let decision_info = self.decision_log.decision_information_received(decision)?;
+                    let dec_log_work = DLWorkMessage::init_dec_log_message(self.view(), DecisionLogWorkMessage::DecisionInformation(decision));
 
-                        self.execute_logged_decisions(decision_info)?;
-                    }
+                    self.decision_log_handle.send_work(dec_log_work);
                 }
             }
             OPExecResult::RunCst => {
-                self.run_all_state_transfer()?;
+                self.run_transfer_protocols()?;
             }
         }
 
@@ -729,7 +610,11 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
     }
 
     fn clear_currently_executing(&mut self) -> Result<()> {
-        self.decision_log.clear_decisions_forward(self.decision_log.sequence_number())
+        let work_message = DLWorkMessage::init_dec_log_message(self.view(), DecisionLogWorkMessage::ClearUnfinishedDecisions);
+
+        self.decision_log_handle.send_work(work_message);
+
+        Ok(())
     }
 
     fn execute_logged_decisions(&mut self, decisions: MaybeVec<LoggedDecision<D::Request>>) -> Result<()> {
@@ -778,8 +663,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         Ok(())
     }
 
-    /// FIXME: Do this with a select?
     fn receive_internal(&mut self) -> Result<()> {
+        // FIXME: Do this with a select?
         while let Ok(recvd) = self.execution.0.try_recv() {
             match recvd {
                 Message::Timeout(timeout) => {
@@ -793,12 +678,12 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         while let Ok(received) = self.reconf_receive.try_recv() {
             match received {
                 QuorumReconfigurationMessage::RequestQuorumJoin(node) => {
-                    info!("Received request for quorum view alteration for {:?}, current phase: {:?}", node, self.replica_phase);
+                    info!("Received request for quorum view alteration for {:?}, current phase: {:?}", node, self.execution_state);
 
                     self.attempt_quorum_join(node)?;
                 }
                 QuorumReconfigurationMessage::AttemptToJoinQuorum => {
-                    info!("Received request to attempt to join quorum, current phase: {:?}", self.replica_phase);
+                    info!("Received request to attempt to join quorum, current phase: {:?}", self.execution_state);
 
                     self.attempt_to_join_quorum()?;
                 }
@@ -870,12 +755,9 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         if !log_transfer.is_empty() {
             debug!("{:?} // Received log transfer timeouts: {}", NetworkNode::id(&*self.node), log_transfer.len());
 
-            match self.log_transfer_protocol.handle_timeout(self.view(), log_transfer)? {
-                LTTimeoutResult::RunLTP => {
-                    self.run_log_transfer_protocol()?;
-                }
-                _ => {}
-            };
+            let lt_work_message = DLWorkMessage::init_log_transfer_message(self.view(), LogTransferWorkMessage::ReceivedTimeout(log_transfer));
+
+            self.decision_log_handle.send_work(lt_work_message);
         }
 
         if !reconfiguration.is_empty() {
@@ -900,7 +782,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         match self.ordering_protocol.handle_timeout(timed_out)? {
             OPExecResult::RunCst => {
-                self.run_all_state_transfer()?;
+                self.run_transfer_protocols()?;
             }
             _ => {}
         };
@@ -912,33 +794,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
     fn run_ordering_protocol(&mut self) -> Result<()> {
         info!("{:?} // Running ordering protocol.", NetworkNode::id(&*self.node));
 
-        let phase = std::mem::replace(&mut self.replica_phase, ReplicaPhase::OrderingProtocol(OPPhase::OrderProtocol));
-
-        match phase {
-            ReplicaPhase::OrderingProtocol(_) => {}
-            ReplicaPhase::TransferProtocol { log_transfer, state_transfer } => {
-                if let Some((log_first, log_last, requests_to_execute)) = log_transfer {
-                    /// deliver the requests to the executor
-
-                    let mut requests = MaybeVec::builder();
-
-                    requests_to_execute.into_iter().for_each(|decision| {
-                        let (_, _, logged_val) = decision.into_inner();
-
-                        match logged_val {
-                            LoggedDecisionValue::Execute(mut rqs) => {
-                                requests.push(rqs);
-                            }
-                            _ => {}
-                        }
-                    });
-
-                    self.executor_handle.catch_up_to_quorum(requests.build())?;
-                }
-            }
-        }
-
-        self.replica_phase = ReplicaPhase::OrderingProtocol(OPPhase::OrderProtocol);
+        self.execution_state = ExecutionPhase::OrderProtocol;
 
         self.ordering_protocol.handle_execution_changed(true)?;
 
@@ -950,82 +806,58 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
     }
 
     /// Is the log transfer protocol finished?
-    fn is_log_transfer_done(log: &LogTransferDone<D::Request>) -> bool {
-        return log.is_some();
+    fn is_log_transfer_done(state: &TransferPhase) -> bool {
+        match state {
+            TransferPhase::NotRunning => false,
+            TransferPhase::RunningTransferProtocols { log_transfer, .. } => {
+                match log_transfer {
+                    LogTransferState::Done(_, _) => true,
+                    _ => false
+                }
+            }
+        }
     }
 
     /// Is the state transfer protocol finished?
-    fn is_state_transfer_done(state: &StateTransferDone) -> bool {
-        return state.is_some();
-    }
-
-    /// Mark the log transfer protocol as done
-    fn log_transfer_protocol_done(&mut self, first_seq: SeqNo, last_seq: SeqNo, requests_to_execute: MaybeVec<LoggedDecision<D::Request>>) -> Result<()> {
-        let log_transfer_protocol_done = match &mut self.replica_phase {
-            ReplicaPhase::OrderingProtocol(_) => false,
-            ReplicaPhase::TransferProtocol { log_transfer, state_transfer } => {
-                *log_transfer = Some((first_seq, last_seq, requests_to_execute));
-
-                if Self::is_log_transfer_done(log_transfer) & &Self::is_state_transfer_done(state_transfer) {
-                    true
-                } else {
-                    false
+    fn is_state_transfer_done(state: &TransferPhase) -> bool {
+        match state {
+            TransferPhase::NotRunning => false,
+            TransferPhase::RunningTransferProtocols { state_transfer, .. } => {
+                match state_transfer {
+                    StateTransferState::Done(_) => true,
+                    _ => false
                 }
             }
-        };
-
-        if log_transfer_protocol_done {
-            self.finish_state_transfer()?;
         }
-
-        Ok(())
     }
 
-    /// Mark the state transfer protocol as done
-    fn state_transfer_protocol_done(&mut self, seq_no: SeqNo) -> Result<()> {
-        let state_transfer_protocol_done = match &mut self.replica_phase {
-            ReplicaPhase::OrderingProtocol(_) => false,
-            ReplicaPhase::TransferProtocol { state_transfer, log_transfer } => {
-                *state_transfer = Some(seq_no);
+    // Finish the transfer protocols
+    fn finish_transfer(&mut self) -> Result<()> {
+        match &self.transfer_states {
+            TransferPhase::NotRunning => unreachable!(),
+            TransferPhase::RunningTransferProtocols { log_transfer, state_transfer } => {
+                match (log_transfer, state_transfer) {
+                    (LogTransferState::Done(initial_seq, final_seq), StateTransferState::Done(state_transfer_seq)) => {
+                        if (*state_transfer_seq < *initial_seq || *state_transfer_seq > *final_seq) && (*state_transfer_seq != SeqNo::ZERO && *initial_seq != SeqNo::ZERO) {
+                            error!("{:?} // Log transfer protocol and state transfer protocol are not in sync. Received {:?} state and {:?} - {:?} log", self.id(), *state_transfer_seq, * initial_seq, * final_seq);
 
-                if Self::is_log_transfer_done(log_transfer) & &Self::is_state_transfer_done(state_transfer) {
-                    true
-                } else {
-                    false
-                }
-            }
-        };
+                            self.run_transfer_protocols()?;
+                        } else {
+                            let mut to_execute_seq = *initial_seq;
 
-        if state_transfer_protocol_done {
-            self.finish_state_transfer()?;
-        }
+                            if *state_transfer_seq > to_execute_seq {
+                                to_execute_seq = state_transfer_seq.next();
+                            }
 
-        Ok(())
-    }
+                            info!("{:?} // State transfer protocol and log transfer protocol are in sync. Received {:?} state and {:?} - {:?} log", self.id(), *state_transfer_seq, * initial_seq, * final_seq);
 
-    /// Handle the log transfer and the state transfer protocol finishing
-    /// their execution
-    fn finish_state_transfer(&mut self) -> Result<()> {
-        match &self.replica_phase {
-            ReplicaPhase::OrderingProtocol(_) => {}
-            ReplicaPhase::TransferProtocol { state_transfer, log_transfer } => {
-                let state_transfer = state_transfer.clone().unwrap();
-                let (log_first, log_last, _) = log_transfer.as_ref().unwrap();
+                            // We now have to report to the decision log that he can send the executions to the executor
+                            let decision_log_work = DLWorkMessage::init_log_transfer_message(self.view(), LogTransferWorkMessage::TransferDone(to_execute_seq, *final_seq));
 
-// If both the state and the log start at 0, then we can just run the ordering protocol since
-// There is no state currently present.
-                if state_transfer.next() != *log_first && (state_transfer != SeqNo::ZERO && *log_first != SeqNo::ZERO) {
-                    error!("{:?} // Log transfer protocol and state transfer protocol are not in sync. Received {:?} state and {:?} - {:?} log", self.id(), state_transfer, * log_first, * log_last);
-
-// Run both the protocols again
-// This might work better since we already have a more up-to-date state (in
-// The case of a hugely large state) so the state transfer protocol should take less time
-                    self.run_all_state_transfer()?;
-                } else {
-                    info!("{:?} // State transfer protocol and log transfer protocol are in sync. Received {:?} state and {:?} - {:?} log", self.id(), state_transfer, * log_first, * log_last);
-
-                    /// If the protocols are lined up so we can start running the ordering protocol
-                    self.run_ordering_protocol()?;
+                            self.decision_log_handle.send_work(decision_log_work);
+                        }
+                    }
+                    _ => unreachable!()
                 }
             }
         }
@@ -1035,6 +867,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
     /// Run both the transfer protocols
     fn run_transfer_protocols(&mut self) -> Result<()> {
+        info!("{:?} // Running state and log transfer protocols. {:?}", NetworkNode::id(&*self.node), self.transfer_states);
+
         self.transfer_states = TransferPhase::RunningTransferProtocols {
             state_transfer: StateTransferState::Running,
             log_transfer: LogTransferState::Running,
@@ -1046,7 +880,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         Ok(())
     }
 
-    fn run_state_transfer_protocol_v2(&mut self) -> Result<()> {
+    fn run_state_transfer_protocol(&mut self) -> Result<()> {
         let state = std::mem::replace(&mut self.transfer_states, TransferPhase::NotRunning);
 
         self.transfer_states = match state {
@@ -1069,7 +903,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         Ok(())
     }
 
-    fn run_log_transfer_protocol_v2(&mut self) -> Result<()> {
+    fn run_log_transfer_protocol(&mut self) -> Result<()> {
         let state = std::mem::replace(&mut self.transfer_states, TransferPhase::NotRunning);
 
         self.transfer_states = match state {
@@ -1086,82 +920,6 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         };
 
         self.decision_log_handle.send_work(DLWorkMessage::init_log_transfer_message(self.view(), LogTransferWorkMessage::RequestLogTransfer));
-
-        Ok(())
-    }
-
-    /// Run the state transfer and log transfer protocols
-    fn run_all_state_transfer(&mut self) -> Result<()> {
-        info!("{:?} // Running state and log transfer protocols. {:?}", NetworkNode::id(&*self.node), self.replica_phase);
-
-        match &mut self.replica_phase {
-            ReplicaPhase::OrderingProtocol(op) => {
-                match op {
-                    OPPhase::OrderProtocol => {
-                        self.ordering_protocol.handle_execution_changed(false)?;
-                    }
-                    _ => {}
-                }
-
-                self.replica_phase = ReplicaPhase::TransferProtocol {
-                    state_transfer: None,
-                    log_transfer: None,
-                };
-            }
-            ReplicaPhase::TransferProtocol { state_transfer, log_transfer } => {
-                warn!("{:?} // Why would we want to run the protocols when we are already running them?", NetworkNode::id(&*self.node));
-
-                return Ok(());
-            }
-        }
-
-        let view = self.view();
-
-        self.state_transfer_handle.send_work_message(StateTransferWorkMessage::RequestLatestState(view.clone()));
-        // Start by requesting the current state from neighbour replicas
-        self.log_transfer_protocol.request_latest_log(&mut self.decision_log, view)?;
-
-        Ok(())
-    }
-
-    /// Run the state transfer protocol on this replica
-    fn run_state_transfer_protocol(&mut self) -> Result<()> {
-        info!("{:?} // Running state transfer protocol. {:?}", NetworkNode::id(&*self.node), self.replica_phase);
-
-        match &mut self.replica_phase {
-            ReplicaPhase::OrderingProtocol(_) => {
-                self.run_all_state_transfer()?;
-            }
-            ReplicaPhase::TransferProtocol { state_transfer, .. } => {
-                warn!("{:?} // Why would we want to run the state transfer protocol when we are already running it?", NetworkNode::id(&*self.node));
-
-                *state_transfer = None;
-
-                self.state_transfer_handle.send_work_message(StateTransferWorkMessage::RequestLatestState(self.view()));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Runs the log transfer protocol on this replica
-    fn run_log_transfer_protocol(&mut self) -> Result<()> {
-        info!("{:?} // Running log transfer protocol. {:?}", NetworkNode::id(&*self.node), self.replica_phase);
-
-        match &mut self.replica_phase {
-            ReplicaPhase::OrderingProtocol(_) => {
-                self.run_all_state_transfer()?;
-            }
-            ReplicaPhase::TransferProtocol { log_transfer, .. } => {
-                warn!("{:?} // Why would we want to run the log transfer protocol when we are already running it?", NetworkNode::id(&*self.node));
-
-                *log_transfer = None;
-
-                let view = self.view();
-
-                self.log_transfer_protocol.request_latest_log(&mut self.decision_log, view)?;
-            }
-        }
 
         Ok(())
     }
@@ -1219,27 +977,6 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         Ok(())
     }
 
-    /// Handle the previous phase
-    ///
-    fn handle_previous_phase(&mut self, phase: ReplicaPhase<D::Request>) -> Result<()> {
-        match phase {
-            ReplicaPhase::TransferProtocol { state_transfer, log_transfer } => {
-                self.run_all_state_transfer()?;
-            }
-            ReplicaPhase::OrderingProtocol(op) => {
-                match op {
-                    OPPhase::OrderProtocol => {
-                        self.run_ordering_protocol()?;
-                    }
-                    OPPhase::ViewTransferProtocol(_) => {
-                        self.run_view_transfer()?;
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
 
 impl QuorumReconfig {
@@ -1274,11 +1011,11 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
         todo!()
     }
 
-    default fn run_view_transfer(&mut self) -> Result<Option<ReplicaPhase<D::Request>>>
+    default fn run_view_transfer(&mut self) -> Result<()>
         where NT: ViewTransferProtocolSendNode<VT::Serialization> {
         info!("Running the default view transfer protocol, where there actually is no view transfer");
 
-        Ok(Some(self.replica_phase.clone()))
+        Ok(())
     }
 
     default fn iterate_view_transfer_protocol(&mut self) -> Result<()>
@@ -1308,40 +1045,15 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
         self.ordering_protocol.view()
     }
 
-    fn run_view_transfer(&mut self) -> Result<Option<ReplicaPhase<D::Request>>>
+    fn run_view_transfer(&mut self) -> Result<()>
         where NT: ViewTransferProtocolSendNode<VT::Serialization> {
         info!("Running view transfer protocol on the replica");
 
-        let phase = std::mem::replace(&mut self.replica_phase, ReplicaPhase::OrderingProtocol(OPPhase::ViewTransferProtocol(None)));
-
-        let to_return = match &phase {
-            ReplicaPhase::OrderingProtocol(_) => {
-                None
-            }
-            ReplicaPhase::TransferProtocol { .. } => {
-                Some(Box::new(phase))
-            }
-        };
-
-        if let Some(phase) = to_return {
-            match &mut self.replica_phase {
-                ReplicaPhase::OrderingProtocol(op) => {
-                    match op {
-                        OPPhase::ViewTransferProtocol(some) => {
-                            info!("Inserting previous replica phase as {:?}", phase);
-
-                            let _ = some.insert(phase);
-                        }
-                        _ => unreachable!()
-                    }
-                }
-                ReplicaPhase::TransferProtocol { .. } => unreachable!()
-            };
-        }
+        self.execution_state = ExecutionPhase::ViewTransferProtocol;
 
         self.view_transfer_protocol.request_latest_view(&self.ordering_protocol)?;
 
-        Ok(None)
+        Ok(())
     }
 
     fn iterate_view_transfer_protocol(&mut self) -> Result<()>
@@ -1392,8 +1104,11 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
                         SystemMessage::LogTransferMessage(log_transfer) => {
                             let view = self.view();
 
-                            self.log_transfer_protocol.handle_off_ctx_message(&mut self.decision_log, view,
-                                                                              StoredMessage::new(header, log_transfer.into_inner())).unwrap();
+                            let strd_msg = StoredMessage::new(header, log_transfer.into_inner());
+
+                            let work_msg = DLWorkMessage::init_log_transfer_message(view, LogTransferWorkMessage::LogTransferMessage(strd_msg));
+
+                            self.decision_log_handle.send_work(work_msg);
                         }
                         _ => {
                             error!("{:?} // Received unsupported message {:?}", NetworkNode::id(&*self.node), message);
@@ -1407,21 +1122,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
                     VTResult::VTransferNotNeeded => {}
                     VTResult::VTransferRunning => {}
                     VTResult::VTransferFinished => {
-                        match &self.replica_phase {
-                            ReplicaPhase::OrderingProtocol(op) => {
-                                match op {
-                                    OPPhase::ViewTransferProtocol(previous) => {
-                                        if let Some(replica) = previous {
-                                            self.handle_previous_phase((**replica).clone())?;
-                                        } else {
-                                            self.run_ordering_protocol()?;
-                                        }
-                                    }
-                                    _ => unreachable!()
-                                }
-                            }
-                            _ => unreachable!()
-                        }
+                        self.run_ordering_protocol()?;
                     }
                 }
             }
@@ -1434,32 +1135,21 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
         where NT: ViewTransferProtocolSendNode<VT::Serialization> {
         debug!("Handling the view transfer message {:?}", message);
 
-        match &self.replica_phase {
-            ReplicaPhase::OrderingProtocol(op_phase) => {
-                match op_phase {
-                    OPPhase::OrderProtocol => {
-                        self.view_transfer_protocol.handle_off_context_msg(&self.ordering_protocol, message)?;
-                    }
-                    OPPhase::ViewTransferProtocol(prev) => {
-                        let vt_result = self.view_transfer_protocol.process_message(&mut self.ordering_protocol, message)?;
+        match self.execution_state {
+            ExecutionPhase::OrderProtocol => {
+                self.view_transfer_protocol.handle_off_context_msg(&self.ordering_protocol, message)?;
+            }
+            ExecutionPhase::ViewTransferProtocol => {
+                let vt_result = self.view_transfer_protocol.process_message(&mut self.ordering_protocol, message)?;
 
-                        match vt_result {
-                            VTResult::RunVTP => {}
-                            VTResult::VTransferNotNeeded => {}
-                            VTResult::VTransferRunning => {}
-                            VTResult::VTransferFinished => {
-                                if let Some(protocol_stack) = prev {
-                                    self.handle_previous_phase((**protocol_stack).clone())?;
-                                } else {
-                                    self.run_ordering_protocol()?;
-                                }
-                            }
-                        }
+                match vt_result {
+                    VTResult::RunVTP => {}
+                    VTResult::VTransferNotNeeded => {}
+                    VTResult::VTransferRunning => {}
+                    VTResult::VTransferFinished => {
+                        self.run_ordering_protocol()?;
                     }
                 }
-            }
-            ReplicaPhase::TransferProtocol { .. } => {
-                self.view_transfer_protocol.handle_off_context_msg(&self.ordering_protocol, message)?;
             }
         }
 
@@ -1501,8 +1191,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling for Re
           PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
-        match &self.replica_phase {
-            ReplicaPhase::OrderingProtocol(op_phase) => {
+        match self.execution_state {
+            ExecutionPhase::OrderProtocol => {
                 let quorum_node_join = self.ordering_protocol.attempt_quorum_node_join(node)?;
 
                 debug!("{:?} // Attempting to join quorum with result {:?}", self.id(), quorum_node_join);
@@ -1523,7 +1213,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling for Re
                     }
                 };
             }
-            ReplicaPhase::TransferProtocol { .. } => {
+            ExecutionPhase::ViewTransferProtocol => {
                 self.append_pending_join_node(node);
             }
         }
@@ -1587,59 +1277,3 @@ impl NetworkView for MockView {
 /// and a new log checkpoint is initiated.
 /// TODO: Move this to an env variable as it can be highly dependent on the service implemented on top of it
 pub const CHECKPOINT_PERIOD: u32 = 1000;
-
-impl<R> PartialEq for ReplicaPhase<R> where {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (ReplicaPhase::OrderingProtocol(prot), ReplicaPhase::OrderingProtocol(prot2)) => *prot == *prot2,
-            (ReplicaPhase::TransferProtocol { .. }, ReplicaPhase::TransferProtocol { .. }) => true,
-            (_, _) => false
-        }
-    }
-}
-
-impl<R> Debug for OPPhase<R> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OPPhase::OrderProtocol => {
-                write!(f, "Order Protocol")
-            }
-            OPPhase::ViewTransferProtocol(previous) => {
-                write!(f, "View Tranfer Protocol with Prev: {:?}", previous)
-            }
-        }
-    }
-}
-
-impl<R> PartialEq<Self> for OPPhase<R> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (OPPhase::OrderProtocol, OPPhase::OrderProtocol) => true,
-            (OPPhase::ViewTransferProtocol(_), OPPhase::ViewTransferProtocol(_)) => true,
-            _ => false
-        }
-    }
-}
-
-impl<R> Eq for OPPhase<R> {}
-
-impl<R> Debug for ReplicaPhase<R> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ReplicaPhase::OrderingProtocol(op_phase) => {
-                write!(f, "OrderingProtocol {:?}", op_phase)
-            }
-            ReplicaPhase::TransferProtocol { log_transfer, state_transfer } => {
-                write!(f, "StateTransferProtocol {:?}", state_transfer)?;
-
-                write!(f, ", Log transfer protocol")?;
-
-                if let Some((seq, seq_2, _)) = log_transfer {
-                    write!(f, " from {:?} to {:?}", seq, seq_2)
-                } else {
-                    write!(f, " None")
-                }
-            }
-        }
-    }
-}

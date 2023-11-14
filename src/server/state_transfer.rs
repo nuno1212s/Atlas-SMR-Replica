@@ -30,7 +30,6 @@ pub enum StateTransferProgress {
 }
 
 /// The handle to the state transfer thread.
-#[derive(Clone)]
 pub struct StateTransferThreadHandle<V, ST> where V: NetworkView, ST: StateTransferMessage {
     work_tx: ChannelSyncTx<StateTransferWorkMessage<V, STMsg<ST>>>,
     response_rx: ChannelSyncRx<StateTransferProgress>,
@@ -188,6 +187,16 @@ impl<V, ST> StateTransferThreadHandle<V, ST> where V: NetworkView,
             Err(_) => {
                 None
             }
+        }
+    }
+}
+
+impl<V, ST> Clone for StateTransferThreadHandle<V, ST> where V: NetworkView,
+                                                             ST: StateTransferMessage {
+    fn clone(&self) -> Self {
+        Self {
+            work_tx: self.work_tx.clone(),
+            response_rx: self.response_rx.clone(),
         }
     }
 }

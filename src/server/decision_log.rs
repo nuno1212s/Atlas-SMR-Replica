@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use either::Either;
 use log::error;
 use atlas_common::channel;
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, RecvError};
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::error::*;
 use atlas_common::maybe_vec::ordered::MaybeOrderedVec;
@@ -18,15 +19,26 @@ use atlas_core::persistent_log::PersistentDecisionLog;
 use atlas_core::request_pre_processing::{PreProcessorMessage, RequestPreProcessor};
 use atlas_core::smr::smr_decision_log::{DecisionLog, LoggedDecision, LoggedDecisionValue};
 use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
-use atlas_core::timeouts::RqTimeout;
+use atlas_core::timeouts::{RqTimeout, Timeouts};
 use atlas_smr_application::ExecutorHandle;
 use atlas_smr_application::serialize::ApplicationData;
 use crate::server::CHECKPOINT_PERIOD;
 use crate::server::state_transfer::{StateTransferThreadHandle, StateTransferWorkMessage};
 
+const CHANNEL_SIZE: usize = 128;
+
 /// The handle to the decision log thread
+/// 
+/// This is used by the replica to communicate updates to the decision log worker
+/// We rely on the fact that these queues are ordered and that both threads run sequentially,
+/// So the communication between them should match up as if they were all running on the same thread
 #[derive(Clone)]
-pub struct DecisionLogHandle<V, D, OPM, POT, LTM> {
+pub struct DecisionLogHandle<V, D, OPM, POT, LTM>
+    where V: NetworkView,
+          D: ApplicationData + 'static,
+          OPM: OrderingProtocolMessage<D>,
+          POT: PersistentOrderProtocolTypes<D, OPM>,
+          LTM: LogTransferMessage<D, OPM> {
     work_tx: ChannelSyncTx<DLWorkMessage<V, D, OPM, POT, LTM>>,
     status_rx: ChannelSyncRx<ReplicaWorkResponses>,
 }
@@ -37,9 +49,10 @@ pub enum DecisionLogWorkMessage<D, OPM, POT>
           POT: PersistentOrderProtocolTypes<D, OPM>
 {
     ClearSequenceNumber(SeqNo),
-    ClearDecisionsForward(SeqNo),
+    ClearUnfinishedDecisions,
     DecisionInformation(MaybeVec<Decision<DecisionMetadata<D, OPM>, ProtocolMessage<D, OPM>, D::Request>>),
     Proof(PProof<D, OPM, POT>),
+    CheckpointDone(SeqNo)
 }
 
 /// Messages that are destined to the replica so it can piece
@@ -89,12 +102,15 @@ pub enum ActivePhase {
 }
 
 /// The work queue for the decision log
-pub struct DecisionLogWorkQueue<D, OPM, POT> {
+pub struct DecisionLogWorkQueue<D, OPM, POT>
+    where D: ApplicationData,
+          OPM: OrderingProtocolMessage<D>,
+          POT: PersistentOrderProtocolTypes<D, OPM> {
     work_queue: VecDeque<DecisionLogWorkMessage<D, OPM, POT>>,
 }
 
 pub struct DecisionLogManager<V, D, OP, DL, LT, STM, NT, PL>
-    where V: NetworkView,
+    where V: NetworkView ,
           D: ApplicationData + 'static,
           OP: LoggableOrderProtocol<D, NT>,
           DL: DecisionLog<D, OP, NT, PL>,
@@ -115,13 +131,60 @@ pub struct DecisionLogManager<V, D, OP, DL, LT, STM, NT, PL>
 }
 
 impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT, PL>
-    where V: NetworkView,
+    where V: NetworkView + 'static,
           D: ApplicationData + 'static,
-          OP: LoggableOrderProtocol<D, NT>,
-          DL: DecisionLog<D, OP, NT, PL>,
-          LT: LogTransferProtocol<D, OP, DL, NT, PL>,
-          PL: PersistentDecisionLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
-          STM: StateTransferMessage, {
+          OP: LoggableOrderProtocol<D, NT> + 'static,
+          DL: DecisionLog<D, OP, NT, PL> + Send + 'static,
+          LT: LogTransferProtocol<D, OP, DL, NT, PL> + Send + 'static,
+          PL: PersistentDecisionLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
+          NT: Send + Sync + 'static,
+          STM: StateTransferMessage + 'static, {
+
+    /// Initialize the decision log
+    pub fn initialize_decision_log_mngt(dl_config: DL::Config, lt_config: LT::Config,
+                                        persistent_log: PL, timeouts: Timeouts, node: Arc<NT>,
+                                        rq_pre_processor: RequestPreProcessor<D::Request>,
+                                        state_transfer_thread_handle: StateTransferThreadHandle<V, STM>,
+                                        execution_handle: ExecutorHandle<D>)
+                                        -> Result<DecisionLogHandle<V, D, OP::Serialization, OP::PersistableTypes, LT::Serialization>> {
+        let (dl_work_tx, dl_work_rx) = channel::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Work Channel"));
+
+        let (rp_work_tx, rp_work_rx) = channel::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Replica Resp Channel"));
+
+        let handle = DecisionLogHandle {
+            work_tx: dl_work_tx,
+            status_rx: rp_work_rx,
+        };
+
+        std::thread::Builder::new()
+            .name(format!("Decision Log Thread"))
+            .spawn(move || {
+                let decision = DL::initialize_decision_log(dl_config, persistent_log.clone(), execution_handle.clone())
+                    .expect("Failed initialize decision log");
+
+                let log_transfer = LT::initialize(lt_config, timeouts, node, persistent_log)
+                    .expect("Failed to initialize log transfer");
+
+                Self {
+                    decision_log: decision,
+                    log_transfer,
+                    work_receiver: dl_work_rx,
+                    order_protocol_tx: rp_work_tx,
+                    decision_log_pending_queue: DecisionLogWorkQueue {
+                        work_queue: VecDeque::with_capacity(CHANNEL_SIZE)
+                    },
+                    active_phase: ActivePhase::LogTransfer,
+                    rq_pre_processor,
+                    state_transfer_handle: state_transfer_thread_handle,
+                    executor_handle: execution_handle,
+                    pending_decisions_to_execute: None,
+                    _ph: Default::default(),
+                }
+            }).expect("Failed to launch decision log");
+
+        Ok(handle)
+    }
+
     fn run(mut self) -> Result<()> {
         loop {
             let work = self.work_receiver.recv();
@@ -160,7 +223,7 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
         Ok(())
     }
 
-    fn handle_log_transfer_work(&mut self, view: V, lt_work: LogTransferWorkMessage<D, OP::Serialization, OP::PersistableTypes>) -> Result<()> {
+    fn handle_log_transfer_work(&mut self, view: V, lt_work: LogTransferWorkMessage<D, OP::Serialization, LT::Serialization>) -> Result<()> {
         match self.active_phase {
             ActivePhase::LogTransfer => {
                 self.run_log_transfer_work_message(view, lt_work)?;
@@ -191,14 +254,13 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
         Ok(())
     }
 
-    fn run_decision_log_work_message(&mut self, dl_work: DecisionLogWorkMessage<D, OP::Serialization, OP::PersistableTypes>) -> Result<()>
-    {
+    fn run_decision_log_work_message(&mut self, dl_work: DecisionLogWorkMessage<D, OP::Serialization, OP::PersistableTypes>) -> Result<()> {
         match dl_work {
             DecisionLogWorkMessage::ClearSequenceNumber(clear_seq_no) => {
                 self.decision_log.clear_sequence_number(clear_seq_no)?;
             }
-            DecisionLogWorkMessage::ClearDecisionsForward(seq_no) => {
-                self.decision_log.clear_decisions_forward(seq_no)?;
+            DecisionLogWorkMessage::ClearUnfinishedDecisions => {
+                self.decision_log.clear_decisions_forward(self.decision_log.sequence_number())?;
             }
             DecisionLogWorkMessage::DecisionInformation(decision_info) => {
                 for decision in decision_info.into_iter() {
@@ -210,12 +272,15 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
             DecisionLogWorkMessage::Proof(proof) => {
                 self.decision_log.install_proof(proof)?;
             }
+            DecisionLogWorkMessage::CheckpointDone(seq) => {
+                self.decision_log.state_checkpoint(seq)?;
+            }
         }
 
         Ok(())
     }
 
-    fn run_log_transfer_work_message(&mut self, view: V, lt_work: LogTransferWorkMessage<D, OP::Serialization, OP::PersistableTypes>) -> Result<()> {
+    fn run_log_transfer_work_message(&mut self, view: V, lt_work: LogTransferWorkMessage<D, OP::Serialization, LT::Serialization>) -> Result<()> {
         match lt_work {
             LogTransferWorkMessage::RequestLogTransfer => {
                 self.run_log_transfer_protocol(view)?;
@@ -336,7 +401,12 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
     }
 }
 
-impl<V, D, OPM, POT, LTM> DLWorkMessage<V, D, OPM, POT, LTM> {
+impl<V, D, OPM, POT, LTM> DLWorkMessage<V, D, OPM, POT, LTM>
+    where V: NetworkView,
+          D: ApplicationData + 'static,
+          OPM: OrderingProtocolMessage<D>,
+          POT: PersistentOrderProtocolTypes<D, OPM>,
+          LTM: LogTransferMessage<D, OPM> {
     pub fn initialize_message(view: V, work_msg: DLWorkMessageType<D, OPM, POT, LTM>) -> Self {
         Self {
             view,
@@ -353,9 +423,25 @@ impl<V, D, OPM, POT, LTM> DLWorkMessage<V, D, OPM, POT, LTM> {
     }
 }
 
-impl<V, D, OPM, POT, LTM> DecisionLogHandle<V, D, OPM, POT, LTM> {
+impl<V, D, OPM, POT, LTM> DecisionLogHandle<V, D, OPM, POT, LTM>
+    where V: NetworkView,
+          D: ApplicationData + 'static,
+          OPM: OrderingProtocolMessage<D>,
+          POT: PersistentOrderProtocolTypes<D, OPM>,
+          LTM: LogTransferMessage<D, OPM> {
     pub fn send_work(&self, work_message: DLWorkMessage<V, D, OPM, POT, LTM>) {
         let _ = self.work_tx.send(work_message);
+    }
+
+    pub fn recv_resp(&self) -> ReplicaWorkResponses {
+        match self.status_rx.recv() {
+            Ok(message) => {
+                message
+            }
+            Err(_) => {
+                unreachable!("Failed to receive message from the decision log thread")
+            }
+        }
     }
 
     pub fn try_to_recv_resp(&self) -> Option<ReplicaWorkResponses> {
