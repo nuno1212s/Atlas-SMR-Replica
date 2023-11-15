@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use either::Either;
-use log::error;
+use log::{error, info, warn};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, RecvError};
 use atlas_common::maybe_vec::MaybeVec;
@@ -28,7 +28,7 @@ use crate::server::state_transfer::{StateTransferThreadHandle, StateTransferWork
 const CHANNEL_SIZE: usize = 128;
 
 /// The handle to the decision log thread
-/// 
+///
 /// This is used by the replica to communicate updates to the decision log worker
 /// We rely on the fact that these queues are ordered and that both threads run sequentially,
 /// So the communication between them should match up as if they were all running on the same thread
@@ -52,7 +52,7 @@ pub enum DecisionLogWorkMessage<D, OPM, POT>
     ClearUnfinishedDecisions,
     DecisionInformation(MaybeVec<Decision<DecisionMetadata<D, OPM>, ProtocolMessage<D, OPM>, D::Request>>),
     Proof(PProof<D, OPM, POT>),
-    CheckpointDone(SeqNo)
+    CheckpointDone(SeqNo),
 }
 
 /// Messages that are destined to the replica so it can piece
@@ -60,6 +60,7 @@ pub enum DecisionLogWorkMessage<D, OPM, POT>
 pub enum ReplicaWorkResponses {
     InstallSeqNo(SeqNo),
     LogTransferFinalized(SeqNo, SeqNo),
+    LogTransferNotNeeded(SeqNo, SeqNo)
 }
 
 pub enum LogTransferWorkMessage<D, OPM, LTM>
@@ -110,7 +111,7 @@ pub struct DecisionLogWorkQueue<D, OPM, POT>
 }
 
 pub struct DecisionLogManager<V, D, OP, DL, LT, STM, NT, PL>
-    where V: NetworkView ,
+    where V: NetworkView,
           D: ApplicationData + 'static,
           OP: LoggableOrderProtocol<D, NT>,
           DL: DecisionLog<D, OP, NT, PL>,
@@ -139,7 +140,6 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
           PL: PersistentDecisionLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           NT: Send + Sync + 'static,
           STM: StateTransferMessage + 'static, {
-
     /// Initialize the decision log
     pub fn initialize_decision_log_mngt(dl_config: DL::Config, lt_config: LT::Config,
                                         persistent_log: PL, timeouts: Timeouts, node: Arc<NT>,
@@ -165,7 +165,7 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                 let log_transfer = LT::initialize(lt_config, timeouts, node, persistent_log)
                     .expect("Failed to initialize log transfer");
 
-                Self {
+                let mut decision_log_manager = Self {
                     decision_log: decision,
                     log_transfer,
                     work_receiver: dl_work_rx,
@@ -179,13 +179,21 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                     executor_handle: execution_handle,
                     pending_decisions_to_execute: None,
                     _ph: Default::default(),
+                };
+
+                loop {
+                    if let Err(err) = decision_log_manager.run() {
+                        error!("Ran into error while running the decision log {:?}", err)
+                    }
                 }
             }).expect("Failed to launch decision log");
 
         Ok(handle)
     }
 
-    fn run(mut self) -> Result<()> {
+    fn run(&mut self) -> Result<()> {
+        info!("Running decision log thread");
+
         loop {
             let work = self.work_receiver.recv();
 
@@ -245,7 +253,7 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                         }
                     }
                     LogTransferWorkMessage::TransferDone(_, _) => {
-                        unreachable!("How can the transfer be done if we are running the decision log")
+                        warn!("How can the transfer be done if we are running the decision log")
                     }
                 }
             }
@@ -291,7 +299,9 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                         self.log_transfer.request_latest_log(&mut self.decision_log, view)?;
                     }
                     LTResult::NotNeeded => {
-                        self.run_decision_log_protocol()?;
+                        info!("Log transfer protocol is not necessary, running decision log protocol");
+
+                        let _ = self.order_protocol_tx.send(ReplicaWorkResponses::LogTransferNotNeeded(self.decision_log.first_sequence(), self.decision_log.sequence_number()));
                     }
                     LTResult::Running => {}
                     LTResult::InstallSeq(seq) => {
@@ -308,6 +318,8 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                 self.log_transfer.handle_timeout(view, timeout)?;
             }
             LogTransferWorkMessage::TransferDone(start, end) => {
+                info!("Received transfer done order from replica with seq {:?}, ending at {:?}", start, end);
+
                 if let Some(decisions) = self.pending_decisions_to_execute.take() {
                     decisions.into_iter().for_each(|decision| {
                         match decision.sequence_number().index(start) {
@@ -329,6 +341,8 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                         }
                     });
                 }
+
+                self.active_phase = ActivePhase::DecisionLog;
             }
         }
 

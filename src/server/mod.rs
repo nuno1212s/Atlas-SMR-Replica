@@ -288,11 +288,9 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         ::initialize_decision_log_mngt(dl_config, lt_config, persistent_log.clone(), timeouts.clone(), node.clone(),
                                        rq_pre_processor.clone(), state.clone(), executor.clone())?;
 
-
         let ordering_protocol = OP::initialize(op_config, op_args)?;
 
         let view_transfer_protocol = VT::initialize_view_transfer_protocol(vt_config, node.clone(), quorum.clone())?;
-
 
         info!("{:?} // Finished bootstrapping node.", log_node_id);
 
@@ -339,6 +337,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         let now = Instant::now();
 
         self.receive_internal()?;
+
+        self.poll_other_protocols()?;
 
         metric_duration(REPLICA_INTERNAL_PROCESS_TIME_ID, now.elapsed());
 
@@ -470,9 +470,13 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         while let Some(dec_log_res) = self.decision_log_handle.try_to_recv_resp() {
             match dec_log_res {
                 ReplicaWorkResponses::InstallSeqNo(seq_no) => {
+                    info!("Installing sequence number {:?} into order protocol", seq_no);
                     self.ordering_protocol.install_seq_no(seq_no)?;
                 }
                 ReplicaWorkResponses::LogTransferFinalized(first_seq, last_seq) => {
+                    self.handle_log_transfer_done(first_seq, last_seq)?;
+                }
+                ReplicaWorkResponses::LogTransferNotNeeded(first_seq, last_seq) => {
                     self.handle_log_transfer_done(first_seq, last_seq)?;
                 }
             }
@@ -507,6 +511,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
     /// Handles receiving the log transfer finalized
     fn handle_log_transfer_done(&mut self, initial_seq: SeqNo, last_seq: SeqNo) -> Result<()> {
+        info!("Handling log transfer result {:?} to {:?} with current phase {:?}", initial_seq, last_seq, self.transfer_states);
+
         let prev_state = std::mem::replace(&mut self.transfer_states, TransferPhase::NotRunning);
 
         self.transfer_states = match prev_state {
@@ -533,6 +539,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
     /// Handles receiving the state transfer state
     fn handle_state_transfer_done(&mut self, seq: SeqNo) -> Result<()> {
+        info!("Handling state transfer result {:?} with current phase {:?}", seq, self.transfer_states);
+
         let prev_state = std::mem::replace(&mut self.transfer_states, TransferPhase::NotRunning);
 
         self.transfer_states = match prev_state {
@@ -867,12 +875,12 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
     /// Run both the transfer protocols
     fn run_transfer_protocols(&mut self) -> Result<()> {
-        info!("{:?} // Running state and log transfer protocols. {:?}", NetworkNode::id(&*self.node), self.transfer_states);
-
         self.transfer_states = TransferPhase::RunningTransferProtocols {
             state_transfer: StateTransferState::Running,
             log_transfer: LogTransferState::Running,
         };
+
+        info!("{:?} // Running state and log transfer protocols. {:?}", NetworkNode::id(&*self.node), self.transfer_states);
 
         self.state_transfer_handle.send_work_message(StateTransferWorkMessage::RequestLatestState(self.view()));
         self.decision_log_handle.send_work(DLWorkMessage::init_log_transfer_message(self.view(), LogTransferWorkMessage::RequestLogTransfer));
@@ -976,7 +984,6 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         Ok(())
     }
-
 }
 
 impl QuorumReconfig {
@@ -1059,7 +1066,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
     fn iterate_view_transfer_protocol(&mut self) -> Result<()>
         where NT: ViewTransferProtocolSendNode<VT::Serialization>,
               ST: StateTransferProtocol<S, NT, PL> {
-        debug!("Iterating view transfer protocol.");
+        trace!("Iterating view transfer protocol.");
 
         match self.view_transfer_protocol.poll()? {
             VTPollResult::RePoll => {}
