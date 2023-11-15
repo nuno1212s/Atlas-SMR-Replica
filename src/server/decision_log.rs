@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use either::Either;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, RecvError};
 use atlas_common::maybe_vec::MaybeVec;
@@ -192,10 +192,12 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
     }
 
     fn run(&mut self) -> Result<()> {
-        info!("Running decision log thread");
+        info!("Executing decision log thread loop");
 
         loop {
             let work = self.work_receiver.recv();
+
+            debug!("Received work message from order protocol");
 
             if let Ok(work_message) = work {
                 let DLWorkMessage {
@@ -212,6 +214,14 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                     }
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    fn poll_pending_decisions(&mut self) -> Result<()> {
+        while let Some(head_decision) = self.decision_log_pending_queue.work_queue.pop_front() {
+            self.run_decision_log_work_message(head_decision)?
         }
 
         Ok(())
@@ -342,7 +352,7 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                     });
                 }
 
-                self.active_phase = ActivePhase::DecisionLog;
+                self.run_decision_log_protocol()?;
             }
         }
 
@@ -361,9 +371,7 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
     fn run_decision_log_protocol(&mut self) -> Result<()> {
         self.active_phase = ActivePhase::DecisionLog;
 
-        while let Some(work) = self.decision_log_pending_queue.work_queue.pop_front() {
-            self.handle_decision_log_work(work)?;
-        }
+        self.poll_pending_decisions()?;
 
         Ok(())
     }
@@ -459,7 +467,7 @@ impl<V, D, OPM, POT, LTM> DecisionLogHandle<V, D, OPM, POT, LTM>
     }
 
     pub fn try_to_recv_resp(&self) -> Option<ReplicaWorkResponses> {
-        if let Ok(message) = self.status_rx.recv() {
+        if let Ok(message) = self.status_rx.try_recv() {
             Some(message)
         } else {
             None
