@@ -197,8 +197,6 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
         loop {
             let work = self.work_receiver.recv();
 
-            debug!("Received work message from order protocol");
-
             if let Ok(work_message) = work {
                 let DLWorkMessage {
                     view,
