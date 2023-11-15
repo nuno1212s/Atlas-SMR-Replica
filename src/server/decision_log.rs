@@ -313,7 +313,7 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                     }
                     LTResult::Running => {}
                     LTResult::InstallSeq(seq) => {
-                        let _ = self.order_protocol_tx.send(ReplicaWorkResponses::InstallSeqNo(seq));
+                        let _ = self.order_protocol_tx.send(ReplicaWorkResponses::InstallSeqNo(seq.next()));
                     }
                     LTResult::LTPFinished(init_seq, last_se, decisions_to_execute) => {
                         self.pending_decisions_to_execute = Some(decisions_to_execute);

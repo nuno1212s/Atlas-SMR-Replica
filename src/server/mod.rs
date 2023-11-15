@@ -472,6 +472,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                 ReplicaWorkResponses::InstallSeqNo(seq_no) => {
                     info!("Installing sequence number {:?} into order protocol", seq_no);
                     self.ordering_protocol.install_seq_no(seq_no)?;
+                    debug!("Done installing");
                 }
                 ReplicaWorkResponses::LogTransferFinalized(first_seq, last_seq) => {
                     self.handle_log_transfer_done(first_seq, last_seq)?;
@@ -889,6 +890,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
     }
 
     fn run_state_transfer_protocol(&mut self) -> Result<()> {
+
         let state = std::mem::replace(&mut self.transfer_states, TransferPhase::NotRunning);
 
         self.transfer_states = match state {
@@ -905,6 +907,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                 }
             }
         };
+
+        info!("Running state transfer protocol. {:?}", self.transfer_states);
 
         self.state_transfer_handle.send_work_message(StateTransferWorkMessage::RequestLatestState(self.view()));
 
@@ -926,6 +930,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                 }
             }
         };
+        info!("Running log transfer protocol. {:?}", self.transfer_states);
 
         self.decision_log_handle.send_work(DLWorkMessage::init_log_transfer_message(self.view(), LogTransferWorkMessage::RequestLogTransfer));
 
@@ -1140,8 +1145,6 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
 
     fn handle_view_transfer_msg(&mut self, message: StoredMessage<VTMsg<VT::Serialization>>) -> Result<()>
         where NT: ViewTransferProtocolSendNode<VT::Serialization> {
-        debug!("Handling the view transfer message {:?}", message);
-
         match self.execution_state {
             ExecutionPhase::OrderProtocol => {
                 self.view_transfer_protocol.handle_off_context_msg(&self.ordering_protocol, message)?;
