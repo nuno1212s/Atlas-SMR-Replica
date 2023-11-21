@@ -22,6 +22,8 @@ serialize_capnp = ["atlas-core/serialize_capnp", "atlas-smr-application/serializ
 default = ["serialize_serde"]
 
 [dependencies]
+thiserror = "1.0.50"
+anyhow = "1.0.75"
 log = "0.4.17"
 chrono = "0.4.23"
 atlas-communication = { path = "../Atlas-Communication" }
