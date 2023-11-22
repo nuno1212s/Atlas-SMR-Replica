@@ -83,7 +83,7 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
     }
 
     pub fn notify_of_checkpoint(&self, seq: SeqNo) {
-        self.handle.response_tx.send(StateTransferProgress::CheckpointReceived(seq)).unwrap()
+        self.handle.response_tx.send_return(StateTransferProgress::CheckpointReceived(seq)).unwrap()
     }
 
     fn handle_view(&mut self, view: &V) {
@@ -118,7 +118,7 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
                         let result = state_transfer.process_message(view, message);
 
                         if let Ok(st_result) = result {
-                            let _ = self.handle.response_tx.send(StateTransferProgress::StateTransferProgress(st_result));
+                            let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(st_result));
                         }
                     } else {
                         let _ = state_transfer.handle_off_ctx_message(view, message);
@@ -140,13 +140,13 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
                     if let Some(view) = self.latest_view.clone() {
                         let res = state_transfer.process_message(view, message)?;
 
-                        let _ = self.handle.response_tx.send(StateTransferProgress::StateTransferProgress(res));
+                        let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(res));
                     } else {
                         error!("Failed to process state transfer message due to view")
                     }
                 }
                 STPollResult::STResult(res) => {
-                    let _ = self.handle.response_tx.send(StateTransferProgress::StateTransferProgress(res));
+                    let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(res));
                 }
             };
         }
@@ -172,7 +172,7 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
 impl<V, ST> StateTransferThreadHandle<V, ST> where V: NetworkView,
                                                    ST: StateTransferMessage {
     pub fn send_work_message(&self, msg: StateTransferWorkMessage<V, STMsg<ST>>) {
-        let _ = self.work_tx.send(msg);
+        let _ = self.work_tx.send_return(msg);
     }
 
     pub fn receive_state_transfer_update(&self) -> StateTransferProgress {

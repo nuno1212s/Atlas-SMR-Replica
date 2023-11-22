@@ -124,7 +124,7 @@ impl<V, S, NT, PL, ST> MonStateTransfer<V, S, NT, PL, ST>
                 Ok(digest) => {
                     let checkpoint = Checkpoint::new(seq, appstate, digest);
 
-                    return_tx.send(checkpoint).unwrap();
+                    return_tx.send_return(checkpoint).unwrap();
                 }
                 Err(error) => {
                     error!("Failed to serialize and digest application state: {:?}", error)

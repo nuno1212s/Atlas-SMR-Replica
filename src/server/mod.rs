@@ -253,7 +253,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
             match message {
                 QuorumReconfigurationMessage::ReconfigurationProtocolStable(quorum) => {
-                    reconf_response_tx.send(QuorumReconfigurationResponse::QuorumStableResponse(true)).unwrap();
+                    reconf_response_tx.send_return(QuorumReconfigurationResponse::QuorumStableResponse(true)).unwrap();
 
                     break quorum;
                 }
@@ -388,7 +388,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                         }
                         SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
 // Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
-                            self.rq_pre_processor.send(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
+                            self.rq_pre_processor.send_return(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
                         }
                         SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
                             let message = fwd_protocol.into_inner();
@@ -628,7 +628,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         for decision in decisions.into_iter() {
             let (seq, requests, to_batch) = decision.into_inner();
 
-            if let Err(err) = self.rq_pre_processor.send(PreProcessorMessage::DecidedBatch(requests)) {
+            if let Err(err) = self.rq_pre_processor.send_return(PreProcessorMessage::DecidedBatch(requests)) {
                 error!("Error sending decided batch to pre processor: {:?}", err);
             }
 
@@ -959,10 +959,10 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         info!("{:?} // Sending attempt quorum join response to reconfiguration protocol. Has failed: {:?}", self.id(), failed);
 
         if failed {
-            self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(QuorumAttemptJoinResponse::Failed))
+            self.reconf_tx.send_return(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(QuorumAttemptJoinResponse::Failed))
                 .context("Error sending quorum entrance response to reconfiguration protocol")?;
         } else {
-            self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(QuorumAttemptJoinResponse::Success))
+            self.reconf_tx.send_return(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(QuorumAttemptJoinResponse::Success))
                 .context("Error sending quorum entrance response to reconfiguration protocol")?;
         }
 
@@ -976,11 +976,11 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         match failed_reason {
             None => {
-                self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful(node_id)))
+                self.reconf_tx.send_return(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful(node_id)))
                     .context("Error sending quorum entrance response to reconfiguration protocol")?;
             }
             Some(fail_reason) => {
-                self.reconf_tx.send(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed(node_id, fail_reason)))
+                self.reconf_tx.send_return(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed(node_id, fail_reason)))
                     .context("Error sending quorum entrance response to reconfiguration protocol")?;
             }
         }
@@ -1100,7 +1100,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
                         }
                         SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
 // Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
-                            self.rq_pre_processor.send(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
+                            self.rq_pre_processor.send_return(PreProcessorMessage::ForwardedRequests(StoredMessage::new(header, fwd_reqs))).unwrap();
                         }
                         SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
                             let message = fwd_protocol.into_inner();

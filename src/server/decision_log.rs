@@ -309,16 +309,16 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                     LTResult::NotNeeded => {
                         info!("Log transfer protocol is not necessary, running decision log protocol");
 
-                        let _ = self.order_protocol_tx.send(ReplicaWorkResponses::LogTransferNotNeeded(self.decision_log.first_sequence(), self.decision_log.sequence_number()));
+                        let _ = self.order_protocol_tx.send_return(ReplicaWorkResponses::LogTransferNotNeeded(self.decision_log.first_sequence(), self.decision_log.sequence_number()));
                     }
                     LTResult::Running => {}
                     LTResult::InstallSeq(seq) => {
-                        let _ = self.order_protocol_tx.send(ReplicaWorkResponses::InstallSeqNo(seq.next()));
+                        let _ = self.order_protocol_tx.send_return(ReplicaWorkResponses::InstallSeqNo(seq.next()));
                     }
                     LTResult::LTPFinished(init_seq, last_se, decisions_to_execute) => {
                         self.pending_decisions_to_execute = Some(decisions_to_execute);
 
-                        let _ = self.order_protocol_tx.send(ReplicaWorkResponses::LogTransferFinalized(init_seq, last_se));
+                        let _ = self.order_protocol_tx.send_return(ReplicaWorkResponses::LogTransferFinalized(init_seq, last_se));
                     }
                 };
             }
@@ -335,7 +335,7 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
                             Either::Right(_) => {
                                 let (seq, client_rqs, decision) = decision.into_inner();
 
-                                let _ = self.rq_pre_processor.send(PreProcessorMessage::DecidedBatch(client_rqs));
+                                let _ = self.rq_pre_processor.send_return(PreProcessorMessage::DecidedBatch(client_rqs));
 
                                 match decision {
                                     LoggedDecisionValue::Execute(batch) => {
@@ -378,7 +378,7 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
         for decision in decisions.into_iter() {
             let (seq, requests, to_batch) = decision.into_inner();
 
-            if let Err(err) = self.rq_pre_processor.send(PreProcessorMessage::DecidedBatch(requests)) {
+            if let Err(err) = self.rq_pre_processor.send_return(PreProcessorMessage::DecidedBatch(requests)) {
                 error!("Error sending decided batch to pre processor: {:?}", err);
             }
 
@@ -450,7 +450,7 @@ impl<V, D, OPM, POT, LTM> DecisionLogHandle<V, D, OPM, POT, LTM>
           POT: PersistentOrderProtocolTypes<D, OPM>,
           LTM: LogTransferMessage<D, OPM> {
     pub fn send_work(&self, work_message: DLWorkMessage<V, D, OPM, POT, LTM>) {
-        let _ = self.work_tx.send(work_message);
+        let _ = self.work_tx.send_return(work_message);
     }
 
     pub fn recv_resp(&self) -> ReplicaWorkResponses {
