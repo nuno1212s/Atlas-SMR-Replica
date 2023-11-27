@@ -35,6 +35,7 @@ pub struct MonolithicStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
     /// The application logic.
     pub service: A,
 
+    // the configuration for the replica
     pub replica_config: ReplicaConfig<RF, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>,
 
     /// The configuration for the State transfer protocol
@@ -73,18 +74,6 @@ pub struct ReplicaConfig<RF, S, D, OP, DL, ST, LT, VT, NT, PL> where
     LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
     NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> {
-    /// ID of the Node in question
-    pub id: NodeId,
-
-    /// The number of nodes in the network
-    pub n: usize,
-    /// The number of nodes that can fail in the network
-    pub f: usize,
-
-    ///TODO: These two values should be loaded from storage
-    /// The sequence number for the current view.
-    pub view: SeqNo,
-
     /// Next sequence number attributed to a request by
     /// the consensus layer.
     pub next_consensus_seq: SeqNo,

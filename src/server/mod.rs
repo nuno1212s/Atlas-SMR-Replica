@@ -20,6 +20,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
 use atlas_communication::NetworkNode;
 use atlas_communication::protocol_node::{NodeIncomingRqHandler, ProtocolNetworkNode};
+use atlas_communication::reconfiguration_node::NetworkInformationProvider;
 use atlas_core::log_transfer::{LogTransferProtocol, LTPollResult, LTResult, LTTimeoutResult};
 use atlas_core::messages::Message;
 use atlas_core::messages::SystemMessage;
@@ -204,10 +205,6 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
     async fn bootstrap(cfg: ReplicaConfig<RP, S, D, OP, DL, ST, LT, VT, NT, PL>,
                        executor: ExecutorHandle<D>, state: StateTransferThreadHandle<<Self as PermissionedProtocolHandling<D, S, VT, OP, NT, PL>>::View, ST::Serialization>) -> Result<Self> {
         let ReplicaConfig {
-            id: log_node_id,
-            n,
-            f,
-            view,
             next_consensus_seq,
             db_path,
             op_config,
@@ -220,11 +217,13 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             p,
         } = cfg;
 
-        debug!("{:?} // Bootstrapping replica, starting with networking", log_node_id);
-
         let network_info = RP::init_default_information(reconfig_node)?;
 
-        let node = Arc::new(NT::bootstrap(log_node_id, network_info.clone(), node_config).await?);
+        let log_node_id = network_info.get_own_id();
+
+        info!("{:?} // Bootstrapping replica, starting with networking", log_node_id);
+
+        let node = Arc::new(NT::bootstrap(network_info.get_own_id(), network_info.clone(), node_config).await?);
 
         let (reconf_tx, reconf_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL,
                                                                Some("Reconfiguration Channel message"));
