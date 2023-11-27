@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use anyhow::Context;
+use either::Either;
 
 use log::{debug, error, info, trace, warn};
 use thiserror::Error;
@@ -223,7 +224,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         let network_info = RP::init_default_information(reconfig_node)?;
 
-        let node = Arc::new(NT::bootstrap(network_info.clone(), node_config).await?);
+        let node = Arc::new(NT::bootstrap(log_node_id, network_info.clone(), node_config).await?);
 
         let (reconf_tx, reconf_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL,
                                                                Some("Reconfiguration Channel message"));
@@ -950,7 +951,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             return Ok(());
         }
 
-        self.reply_to_quorum_entrance_request(node, None)?;
+        self.reply_to_quorum_entrance_request(node, Either::Left(members))?;
 
         Ok(())
     }
@@ -971,15 +972,15 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
     /// Send the result of attempting to join the quorum to the reconfiguration protocol, so that
     /// it can proceed with execution
-    fn reply_to_quorum_entrance_request(&mut self, node_id: NodeId, failed_reason: Option<AlterationFailReason>) -> Result<()> {
+    fn reply_to_quorum_entrance_request(&mut self, node_id: NodeId, failed_reason: Either<Vec<NodeId>, AlterationFailReason>) -> Result<()> {
         info!("{:?} // Sending quorum entrance response to reconfiguration protocol with success: {:?}", self.id(), failed_reason);
 
         match failed_reason {
-            None => {
-                self.reconf_tx.send_return(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful(node_id)))
+            Either::Left(quorum) => {
+                self.reconf_tx.send_return(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Successful(node_id, OP::get_f_for_n(quorum.len()))))
                     .context("Error sending quorum entrance response to reconfiguration protocol")?;
             }
-            Some(fail_reason) => {
+            Either::Right(fail_reason) => {
                 self.reconf_tx.send_return(QuorumReconfigurationResponse::QuorumAlterationResponse(QuorumAlterationResponse::Failed(node_id, fail_reason)))
                     .context("Error sending quorum entrance response to reconfiguration protocol")?;
             }
@@ -1178,7 +1179,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling for Re
           PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     default fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
-        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::Failed))
+        self.reply_to_quorum_entrance_request(node, Either::Right(AlterationFailReason::Failed))
     }
 
     default fn attempt_to_join_quorum(&mut self) -> Result<()> {
@@ -1207,17 +1208,17 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling for Re
 
                 match quorum_node_join {
                     ReconfigurationAttemptResult::Failed => {
-                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::Failed))?;
+                        self.reply_to_quorum_entrance_request(node, Either::Right(AlterationFailReason::Failed))?;
                     }
                     ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
-                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::AlreadyPartOfQuorum))?;
+                        self.reply_to_quorum_entrance_request(node, Either::Right(AlterationFailReason::AlreadyPartOfQuorum))?;
                     }
                     ReconfigurationAttemptResult::CurrentlyReconfiguring(_) => {
-                        self.reply_to_quorum_entrance_request(node, Some(AlterationFailReason::OngoingReconfiguration))?;
+                        self.reply_to_quorum_entrance_request(node, Either::Right(AlterationFailReason::OngoingReconfiguration))?;
                     }
                     ReconfigurationAttemptResult::InProgress => {}
-                    ReconfigurationAttemptResult::Successful => {
-                        self.reply_to_quorum_entrance_request(node, None)?;
+                    ReconfigurationAttemptResult::Successful(members) => {
+                        self.reply_to_quorum_entrance_request(node, Either::Left(members))?;
                     }
                 };
             }
@@ -1238,7 +1239,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling for Re
                 self.reply_to_attempt_quorum_join(true)?;
             }
             ReconfigurationAttemptResult::InProgress => {}
-            ReconfigurationAttemptResult::Successful | ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
+            ReconfigurationAttemptResult::Successful(_) | ReconfigurationAttemptResult::AlreadyPartOfQuorum => {
                 // If we are already part of the quorum, then we can immediately reply to it
                 self.reply_to_attempt_quorum_join(false)?;
             }
@@ -1291,6 +1292,5 @@ pub enum SMRReplicaError {
     #[error("The provided quorum is not of sufficient size. Expected at least {0} but got {1}")]
     QuorumNotLargeEnough(usize, usize),
     #[error("The reconfiguration protocol is not stable and we received an alteration request")]
-    AlterationReceivedBeforeStable
-
+    AlterationReceivedBeforeStable,
 }
