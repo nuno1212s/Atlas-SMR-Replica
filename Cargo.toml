@@ -14,13 +14,16 @@ readme = "README.md"
 [features]
 
 serialize_serde = ["atlas-core/serialize_serde", "atlas-communication/serialize_serde",
-    "atlas-smr-application/serialize_serde", "atlas-common/serialize_serde", "atlas-persistent-log/serialize_serde", "atlas-reconfiguration/serialize_serde"]
+    "atlas-smr-application/serialize_serde", "atlas-common/serialize_serde", "atlas-persistent-log/serialize_serde",
+    "atlas-reconfiguration/serialize_serde"]
 serialize_capnp = ["atlas-core/serialize_capnp", "atlas-smr-application/serialize_capnp",
     "atlas-communication/serialize_capnp", "atlas-persistent-log/serialize_capnp"]
 
 default = ["serialize_serde"]
 
 [dependencies]
+thiserror = "1.0.50"
+anyhow = "1.0.75"
 log = "0.4.17"
 chrono = "0.4.23"
 atlas-communication = { path = "../Atlas-Communication" }
@@ -32,3 +35,4 @@ atlas-persistent-log = { path = "../Atlas-Persistent-Log" }
 atlas-reconfiguration = { path = "../Atlas-Reconfiguration" }
 atlas-smr-execution = { path = "../Atlas-SMR-Execution" }
 futures-timer = "3.0.2"
+either = "1.9.0"
