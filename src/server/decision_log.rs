@@ -60,7 +60,7 @@ pub enum DecisionLogWorkMessage<D, OPM, POT>
 pub enum ReplicaWorkResponses {
     InstallSeqNo(SeqNo),
     LogTransferFinalized(SeqNo, SeqNo),
-    LogTransferNotNeeded(SeqNo, SeqNo)
+    LogTransferNotNeeded(SeqNo, SeqNo),
 }
 
 pub enum LogTransferWorkMessage<D, OPM, LTM>
@@ -311,7 +311,7 @@ impl<V, D, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, D, OP, DL, LT, STM, NT
 
                         let _ = self.order_protocol_tx.send_return(ReplicaWorkResponses::LogTransferNotNeeded(self.decision_log.first_sequence(), self.decision_log.sequence_number()));
                     }
-                    LTResult::Running => {}
+                    LTResult::Running | LTResult::Ignored => {}
                     LTResult::InstallSeq(seq) => {
                         let _ = self.order_protocol_tx.send_return(ReplicaWorkResponses::InstallSeqNo(seq.next()));
                     }

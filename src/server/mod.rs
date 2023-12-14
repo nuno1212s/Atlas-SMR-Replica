@@ -4,7 +4,7 @@ use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use either::Either;
 
 use log::{debug, error, info, trace, warn};
@@ -473,9 +473,14 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                     debug!("Done installing");
                 }
                 ReplicaWorkResponses::LogTransferFinalized(first_seq, last_seq) => {
+                    info!("Log transfer finalized with sequence range {:?} to {:?}", first_seq, last_seq);
+
                     self.handle_log_transfer_done(first_seq, last_seq)?;
                 }
                 ReplicaWorkResponses::LogTransferNotNeeded(first_seq, last_seq) => {
+
+                    info!("Log transfer not needed with sequence range {:?} to {:?}", first_seq, last_seq);
+
                     self.handle_log_transfer_done(first_seq, last_seq)?;
                 }
             }
@@ -498,6 +503,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                 self.handle_state_transfer_done(seq_no)?;
             }
             STResult::StateTransferNotNeeded(curr_seq) => {
+                info!("{:?} // State transfer not needed. Registering result and comparing with log transfer result", NetworkNode::id(&*self.node));
+
                 self.handle_state_transfer_done(curr_seq)?;
             }
             STResult::RunStateTransfer => {
@@ -516,7 +523,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         self.transfer_states = match prev_state {
             TransferPhase::NotRunning => {
-                unreachable!("How can we have finished the log transfer result when we are not running transfer protocols")
+                return Err(anyhow!("How can we have finished the log transfer result when we are not running transfer protocols"));
             }
             TransferPhase::RunningTransferProtocols { log_transfer, state_transfer } => {
                 match log_transfer {
@@ -544,7 +551,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         self.transfer_states = match prev_state {
             TransferPhase::NotRunning => {
-                unreachable!("How can we have finished the log transfer result when we are not running transfer protocols")
+                return Err(anyhow!("How can we have finished the state transfer protocol when we are not running transfer protocols"));
             }
             TransferPhase::RunningTransferProtocols { log_transfer, state_transfer } => {
                 match log_transfer {
@@ -840,7 +847,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
     // Finish the transfer protocols
     fn finish_transfer(&mut self) -> Result<()> {
-        match &self.transfer_states {
+        let done = match &self.transfer_states {
             TransferPhase::NotRunning => unreachable!(),
             TransferPhase::RunningTransferProtocols { log_transfer, state_transfer } => {
                 match (log_transfer, state_transfer) {
@@ -849,6 +856,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                             error!("{:?} // Log transfer protocol and state transfer protocol are not in sync. Received {:?} state and {:?} - {:?} log", self.id(), *state_transfer_seq, * initial_seq, * final_seq);
 
                             self.run_transfer_protocols()?;
+
+                            false
                         } else {
                             let mut to_execute_seq = *initial_seq;
 
@@ -862,11 +871,17 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                             let decision_log_work = DLWorkMessage::init_log_transfer_message(self.view(), LogTransferWorkMessage::TransferDone(to_execute_seq, *final_seq));
 
                             self.decision_log_handle.send_work(decision_log_work);
+
+                            true
                         }
                     }
                     _ => unreachable!()
                 }
             }
+        };
+
+        if done {
+            self.transfer_states = TransferPhase::NotRunning;
         }
 
         Ok(())
