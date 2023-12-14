@@ -845,7 +845,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             TransferPhase::RunningTransferProtocols { log_transfer, state_transfer } => {
                 match (log_transfer, state_transfer) {
                     (LogTransferState::Done(initial_seq, final_seq), StateTransferState::Done(state_transfer_seq)) => {
-                        if (*state_transfer_seq < *initial_seq || *state_transfer_seq > *final_seq) && (*state_transfer_seq != SeqNo::ZERO && *initial_seq != SeqNo::ZERO) {
+                        if (state_transfer_seq.next() < *initial_seq || state_transfer_seq.next() > *final_seq) && (*state_transfer_seq != SeqNo::ZERO && *initial_seq != SeqNo::ZERO) {
                             error!("{:?} // Log transfer protocol and state transfer protocol are not in sync. Received {:?} state and {:?} - {:?} log", self.id(), *state_transfer_seq, * initial_seq, * final_seq);
 
                             self.run_transfer_protocols()?;
