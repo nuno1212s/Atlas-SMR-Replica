@@ -276,7 +276,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         let log = persistent_log.read_decision_log(OperationMode::BlockingSync)?;
 
-        let op_args = OrderingProtocolArgs(log_node_id, executor.clone(), timeouts.clone(),
+        let op_args = OrderingProtocolArgs(log_node_id, timeouts.clone(),
                                            rq_pre_processor.clone(),
                                            batch_input, node.clone(),
                                            quorum.clone());
