@@ -23,7 +23,7 @@ use atlas_core::smr::smr_decision_log::DecisionLog;
 use atlas_core::state_transfer::Checkpoint;
 use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_metrics::metrics::metric_duration;
-use atlas_smr_application::app::Application;
+use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::state::monolithic_state::{AppStateMessage, digest_state, InstallStateMessage, MonolithicState};
 use atlas_smr_execution::TMonolithicStateExecutor;
 
@@ -39,12 +39,12 @@ pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + Send + 'static,
-          OP: LoggableOrderProtocol<A::AppData, NT> + 'static,
-          DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
+          OP: LoggableOrderProtocol<Request<A, S>, NT> + 'static,
+          DL: DecisionLog<Request<A, S>, OP, NT, PL> + 'static,
           ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
-          LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
+          LT: LogTransferProtocol<Request<A, S>, OP, DL, NT, PL> + 'static,
           VT: ViewTransferProtocol<OP, NT> + 'static,
-          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
+          PL: SMRPersistentLog<Request<A, S>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     p: PhantomData<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
@@ -57,12 +57,12 @@ impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, 
         ME: TMonolithicStateExecutor<A, S, NT> + 'static,
         S: MonolithicState + 'static,
         A: Application<S> + Send + 'static,
-        OP: LoggableOrderProtocol<A::AppData, NT> + Send + 'static,
-        DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
-        LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
+        OP: LoggableOrderProtocol<Request<A, S>, NT> + Send + 'static,
+        DL: DecisionLog<Request<A, S>, OP, NT, PL> + 'static,
+        LT: LogTransferProtocol<Request<A, S>, OP, DL, NT, PL> + 'static,
         VT: ViewTransferProtocol<OP, NT> + 'static,
         ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
-        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
+        PL: SMRPersistentLog<Request<A, S>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
         NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     pub async fn bootstrap(cfg: MonolithicStateReplicaConfig<RP, S, A, OP, DL, ST, LT, VT, NT, PL>) -> Result<Self> {
         let MonolithicStateReplicaConfig {

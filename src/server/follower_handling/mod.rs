@@ -21,23 +21,26 @@ use atlas_smr_application::serialize::ApplicationData;
 /// This routing is only relevant to the Preprepare requests, all other requests
 /// Can be broadcast from each replica as they are very small and therefore
 /// don't have any effects on performance
-struct FollowersFollowing<D, OP: OrderingProtocolMessage<D>, POP: PermissionedOrderingProtocolMessage, NT> {
+struct FollowersFollowing<D: ApplicationData,
+    OP: OrderingProtocolMessage<D::Request>,
+    POP: PermissionedOrderingProtocolMessage, NT> {
     own_id: NodeId,
     followers: Vec<NodeId>,
     send_node: Arc<NT>,
-    rx: ChannelSyncRx<FollowerChannelMsg<D, OP, POP>>,
+    rx: ChannelSyncRx<FollowerChannelMsg<D::Request, OP, POP>>,
 }
 
 impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
-    OP: OrderingProtocolMessage<D> + 'static,
+    D: ApplicationData + 'static,
+    OP: OrderingProtocolMessage<D::Request> + 'static,
     POP: PermissionedOrderingProtocolMessage + 'static,
     NT: Send + Sync + 'static {
     /// Starts the follower handling thread and returns a cloneable handle that
     /// can be used to deliver messages to it.
-    pub fn init_follower_handling<ST, LP, VT>(id: NodeId, node: &Arc<NT>) -> FollowerHandle<D, OP, POP>
+    pub fn init_follower_handling<ST, LP, VT>(id: NodeId, node: &Arc<NT>) -> FollowerHandle<D::Request, OP, POP>
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
-              LP: LogTransferMessage<D, OP> + 'static,
+              LP: LogTransferMessage<D::Request, OP> + 'static,
               VT: ViewTransferProtocolMessage + 'static,
               NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
         let (tx, rx) = channel::new_bounded_sync(1024,
@@ -58,7 +61,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
     fn start_thread<ST, LP, VT>(self)
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
-              LP: LogTransferMessage<D, OP> + 'static,
+              LP: LogTransferMessage<D::Request, OP> + 'static,
               VT: ViewTransferProtocolMessage + 'static,
               NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
         std::thread::Builder::new()
@@ -75,7 +78,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
     fn run<ST, LP, VT>(mut self)
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
-              LP: LogTransferMessage<D, OP> + 'static,
+              LP: LogTransferMessage<D::Request, OP> + 'static,
               VT: ViewTransferProtocolMessage + 'static,
               NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
         loop {
@@ -149,7 +152,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
         message: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
-            LP: LogTransferMessage<D, OP> + 'static,
+            LP: LogTransferMessage<D::Request, OP> + 'static,
             VT: ViewTransferProtocolMessage + 'static,
             NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
         if view.primary() == self.own_id {
@@ -179,7 +182,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
         prepare: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
-            LP: LogTransferMessage<D, OP> + 'static,
+            LP: LogTransferMessage<D::Request, OP> + 'static,
             VT: ViewTransferProtocolMessage + 'static,
             NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
         if prepare.header().from() != self.own_id {
@@ -206,7 +209,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
         commit: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>,
     ) where D: ApplicationData + 'static,
             ST: StateTransferMessage + 'static,
-            LP: LogTransferMessage<D, OP> + 'static,
+            LP: LogTransferMessage<D::Request, OP> + 'static,
             VT: ViewTransferProtocolMessage + 'static,
             NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
         if commit.header().from() != self.own_id {
@@ -226,7 +229,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
     fn handle_sync_msg<ST, LP, VT>(&mut self, msg: Arc<ReadOnly<StoredMessage<Protocol<OP::ProtocolMessage>>>>)
         where D: ApplicationData + 'static,
               ST: StateTransferMessage + 'static,
-              LP: LogTransferMessage<D, OP> + 'static,
+              LP: LogTransferMessage<D::Request, OP> + 'static,
               VT: ViewTransferProtocolMessage + 'static,
               NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
         let header = msg.header().clone();

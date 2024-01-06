@@ -169,8 +169,9 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
     }
 }
 
-impl<V, ST> StateTransferThreadHandle<V, ST> where V: NetworkView,
-                                                   ST: StateTransferMessage {
+impl<V, ST> StateTransferThreadHandle<V, ST>
+    where V: NetworkView,
+          ST: StateTransferMessage {
     pub fn send_work_message(&self, msg: StateTransferWorkMessage<V, STMsg<ST>>) {
         let _ = self.work_tx.send_return(msg);
     }

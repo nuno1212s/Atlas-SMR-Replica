@@ -14,7 +14,7 @@ use atlas_core::smr::smr_decision_log::DecisionLog;
 use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
 use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_core::state_transfer::StateTransferProtocol;
-use atlas_smr_application::app::Application;
+use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::divisible_state::DivisibleState;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
@@ -25,13 +25,13 @@ pub struct MonolithicStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
     where RF: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + 'static,
-          OP: LoggableOrderProtocol<A::AppData, NT> + 'static,
-          DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
+          OP: LoggableOrderProtocol<Request<A, S>, NT> + 'static,
+          DL: DecisionLog<Request<A, S>, OP, NT, PL> + 'static,
           ST: MonolithicStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
           VT: ViewTransferProtocol<OP, NT> + 'static,
-          LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
+          LT: LogTransferProtocol<Request<A, S>, OP, DL, NT, PL> + 'static,
           NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
-          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> {
+          PL: SMRPersistentLog<Request<A, S>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> {
     /// The application logic.
     pub service: A,
 
@@ -47,13 +47,13 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
         RF: ReconfigurationProtocol + 'static,
         S: DivisibleState + 'static,
         A: Application<S> + 'static,
-        OP: LoggableOrderProtocol<A::AppData, NT> + 'static,
-        DL: DecisionLog<A::AppData, OP, NT, PL> + 'static,
+        OP: LoggableOrderProtocol<Request<A, S>, NT> + 'static,
+        DL: DecisionLog<Request<A, S>, OP, NT, PL> + 'static,
         ST: DivisibleStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
         VT: ViewTransferProtocol<OP, NT> + 'static,
-        LT: LogTransferProtocol<A::AppData, OP, DL, NT, PL> + 'static,
+        LT: LogTransferProtocol<Request<A, S>, OP, DL, NT, PL> + 'static,
         NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
-        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + DivisibleStateLog<S> {
+        PL: SMRPersistentLog<Request<A, S>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + DivisibleStateLog<S> {
     /// The application logic.
     pub service: A,
 
@@ -67,13 +67,13 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
 pub struct ReplicaConfig<RF, S, D, OP, DL, ST, LT, VT, NT, PL> where
     RF: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
-    OP: LoggableOrderProtocol<D, NT> + 'static,
+    OP: LoggableOrderProtocol<D::Request, NT> + 'static,
     ST: StateTransferProtocol<S, NT, PL> + 'static,
-    DL: DecisionLog<D, OP, NT, PL> + 'static,
+    DL: DecisionLog<D::Request, OP, NT, PL> + 'static,
     VT: ViewTransferProtocol<OP, NT> + 'static,
-    LT: LogTransferProtocol<D, OP, DL, NT, PL> + 'static,
+    LT: LogTransferProtocol<D::Request, OP, DL, NT, PL> + 'static,
     NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
-    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> {
+    PL: SMRPersistentLog<D::Request, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> {
     /// Next sequence number attributed to a request by
     /// the consensus layer.
     pub next_consensus_seq: SeqNo,
