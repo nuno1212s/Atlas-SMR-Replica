@@ -99,11 +99,11 @@ type ViewType<D, S, VT, OP, NT, PL, R: PermissionedProtocolHandling<D, S, VT, OP
 
 pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     where D: ApplicationData + 'static,
-          OP: LoggableOrderProtocol<D::Request, NT> + 'static,
-          DL: DecisionLog<D::Request, OP, NT, PL> + 'static,
-          LT: LogTransferProtocol<D::Request, OP, DL, NT, PL> + 'static,
-          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
-          VT: ViewTransferProtocol<OP, NT> + 'static,
+          OP: LoggableOrderProtocol<D::Request, NT>,
+          DL: DecisionLog<D::Request, OP, NT, PL>,
+          LT: LogTransferProtocol<D::Request, OP, DL, NT, PL>,
+          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol,
+          VT: ViewTransferProtocol<OP, NT>,
           PL: SMRPersistentLog<D::Request, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           RP: ReconfigurationProtocol + 'static,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
@@ -195,16 +195,15 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
     where
         RP: ReconfigurationProtocol + 'static,
         D: ApplicationData + 'static,
-        OP: LoggableOrderProtocol<D::Request, NT> + Send + 'static,
-        DL: DecisionLog<D::Request, OP, NT, PL> + 'static,
-        LT: LogTransferProtocol<D::Request, OP, DL, NT, PL> + 'static,
-        ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
-        VT: ViewTransferProtocol<OP, NT> + 'static,
-        NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static,
-        PL: SMRPersistentLog<D::Request, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static, {
-
+        OP: LoggableOrderProtocol<D::Request, NT> + Send,
+        DL: DecisionLog<D::Request, OP, NT, PL>,
+        LT: LogTransferProtocol<D::Request, OP, DL, NT, PL>,
+        ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send,
+        VT: ViewTransferProtocol<OP, NT>,
+        NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>,
+        PL: SMRPersistentLog<D::Request, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>, {
     async fn bootstrap(cfg: ReplicaConfig<RP, S, D, OP, DL, ST, LT, VT, NT, PL>,
-                       executor: ExecutorHandle<D>, state: StateTransferThreadHandle<<Self as PermissionedProtocolHandling<D, S, VT, OP, NT, PL>>::View, ST::Serialization>) -> Result<Self> {
+                       executor: ExecutorHandle<D::Request>, state: StateTransferThreadHandle<<Self as PermissionedProtocolHandling<D, S, VT, OP, NT, PL>>::View, ST::Serialization>) -> Result<Self> {
         let ReplicaConfig {
             next_consensus_seq,
             db_path,
@@ -283,7 +282,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                                            quorum.clone());
 
         let decision_handle = DecisionLogManager
-            ::<ViewType<D, S, VT, OP, NT, PL, Self>, D, OP, DL, LT, ST::Serialization, NT, PL>
+            ::<ViewType<D, S, VT, OP, NT, PL, Self>, D::Request, OP, DL, LT, ST::Serialization, NT, PL>
         ::initialize_decision_log_mngt(dl_config, lt_config, persistent_log.clone(), timeouts.clone(), node.clone(),
                                        rq_pre_processor.clone(), state.clone(), executor.clone())?;
 
@@ -479,7 +478,6 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                     self.handle_log_transfer_done(first_seq, last_seq)?;
                 }
                 ReplicaWorkResponses::LogTransferNotNeeded(first_seq, last_seq) => {
-
                     info!("Log transfer not needed with sequence range {:?} to {:?}", first_seq, last_seq);
 
                     self.handle_log_transfer_done(first_seq, last_seq)?;
@@ -1023,11 +1021,11 @@ impl QuorumReconfig {
 
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT, OP, NT, PL> for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     where D: ApplicationData + 'static,
-          OP: LoggableOrderProtocol<D::Request, NT> + 'static,
-          DL: DecisionLog<D::Request, OP, NT, PL> + 'static,
-          LT: LogTransferProtocol<D::Request, OP, DL, NT, PL> + 'static,
-          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + 'static,
-          VT: ViewTransferProtocol<OP, NT> + 'static,
+          OP: LoggableOrderProtocol<D::Request, NT>,
+          DL: DecisionLog<D::Request, OP, NT, PL>,
+          LT: LogTransferProtocol<D::Request, OP, DL, NT, PL>,
+          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol,
+          VT: ViewTransferProtocol<OP, NT>,
           PL: SMRPersistentLog<D::Request, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           RP: ReconfigurationProtocol + 'static,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
@@ -1185,11 +1183,11 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, S, VT
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
           D: ApplicationData + 'static,
-          OP: LoggableOrderProtocol<D::Request, NT> + Send + 'static,
-          DL: DecisionLog<D::Request, OP, NT, PL> + 'static,
-          LT: LogTransferProtocol<D::Request, OP, DL, NT, PL> + 'static,
-          VT: ViewTransferProtocol<OP, NT> + 'static,
-          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
+          OP: LoggableOrderProtocol<D::Request, NT> + Send,
+          DL: DecisionLog<D::Request, OP, NT, PL>,
+          LT: LogTransferProtocol<D::Request, OP, DL, NT, PL>,
+          VT: ViewTransferProtocol<OP, NT>,
+          ST: StateTransferProtocol<S, NT, PL> + PersistableStateTransferProtocol + Send,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static,
           PL: SMRPersistentLog<D::Request, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {

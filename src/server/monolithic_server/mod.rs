@@ -38,14 +38,14 @@ use crate::server::state_transfer::{init_state_transfer_handles, StateTransferMn
 pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
-          A: Application<S> + Send + 'static,
-          OP: LoggableOrderProtocol<Request<A, S>, NT> + 'static,
-          DL: DecisionLog<Request<A, S>, OP, NT, PL> + 'static,
-          ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + 'static,
-          LT: LogTransferProtocol<Request<A, S>, OP, DL, NT, PL> + 'static,
-          VT: ViewTransferProtocol<OP, NT> + 'static,
+          A: Application<S> + Send ,
+          OP: LoggableOrderProtocol<Request<A, S>, NT> ,
+          DL: DecisionLog<Request<A, S>, OP, NT, PL> ,
+          ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol ,
+          LT: LogTransferProtocol<Request<A, S>, OP, DL, NT, PL> ,
+          VT: ViewTransferProtocol<OP, NT> ,
           PL: SMRPersistentLog<Request<A, S>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
-          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> +'static, {
     p: PhantomData<(A, ME)>,
     /// The inner replica object, responsible for the general replica things
     inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>,

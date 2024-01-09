@@ -135,10 +135,10 @@ pub struct DecisionLogManager<V, RQ, OP, DL, LT, STM, NT, PL>
 
 impl<V, RQ, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, RQ, OP, DL, LT, STM, NT, PL>
     where V: NetworkView + 'static,
-          RQ: SerType,
-          OP: LoggableOrderProtocol<RQ, NT> + 'static,
-          DL: DecisionLog<RQ, OP, NT, PL> + Send + 'static,
-          LT: LogTransferProtocol<RQ, OP, DL, NT, PL> + Send + 'static,
+          RQ: SerType + 'static,
+          OP: LoggableOrderProtocol<RQ, NT> ,
+          DL: DecisionLog<RQ, OP, NT, PL> + Send ,
+          LT: LogTransferProtocol<RQ, OP, DL, NT, PL> + Send ,
           PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           NT: Send + Sync + 'static,
           STM: StateTransferMessage + 'static, {
