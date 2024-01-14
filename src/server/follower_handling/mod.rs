@@ -7,12 +7,13 @@ use atlas_common::node_id::NodeId;
 use atlas_communication::message::StoredMessage;
 use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::followers::{FollowerChannelMsg, FollowerEvent, FollowerHandle};
-use atlas_core::log_transfer::networking::serialize::LogTransferMessage;
-use atlas_core::messages::{Protocol, SystemMessage};
+use atlas_smr_core::log_transfer::networking::serialize::LogTransferMessage;
+use atlas_core::messages::{Protocol};
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage, PermissionedOrderingProtocolMessage, ViewTransferProtocolMessage};
-use atlas_core::serialize::Service;
-use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_application::serialize::ApplicationData;
+use atlas_smr_core::message::SystemMessage;
+use atlas_smr_core::serialize::Service;
+use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 
 /// Store information of the current followers of the quorum
 /// This information will be used to calculate which replicas have to send the

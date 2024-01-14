@@ -8,9 +8,9 @@ use atlas_common::ordering::{InvalidSeqNo, SeqNo};
 use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::ExecutionResult;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::state_transfer::{StateTransferProtocol, STMsg, STPollResult, STResult};
-use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_core::timeouts::RqTimeout;
+use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
+use atlas_smr_core::state_transfer::{StateTransferProtocol, STMsg, STPollResult, STResult};
 
 pub const WORK_CHANNEL_SIZE: usize = 128;
 pub const RESPONSE_CHANNEL_SIZE: usize = 128;

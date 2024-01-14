@@ -3,17 +3,18 @@ use std::path::Path;
 use atlas_common::error::*;
 use atlas_common::serialization_helper::SerType;
 use atlas_core::ordering_protocol::loggable::{OrderProtocolPersistenceHelper, PersistentOrderProtocolTypes};
-use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, PermissionedOrderingProtocolMessage};
+use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage};
 use atlas_core::ordering_protocol::ProtocolConsensusDecision;
-use atlas_core::persistent_log::{OrderingProtocolLog, PersistableStateTransferProtocol, PersistentDecisionLog};
-use atlas_core::smr::networking::serialize::DecisionLogMessage;
-use atlas_core::smr::smr_decision_log::DecisionLogPersistenceHelper;
-use atlas_core::state_transfer::networking::serialize::StateTransferMessage;
+use atlas_core::persistent_log::{OrderingProtocolLog, PersistableStateTransferProtocol};
+use atlas_logging_core::decision_log::DecisionLogPersistenceHelper;
+use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
+use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_persistent_log::PersistentLogModeTrait;
 use atlas_persistent_log::stateful_logs::monolithic_state::{initialize_mon_persistent_log, MonStatePersistentLog};
 use atlas_smr_application::ExecutorHandle;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
+use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 
 pub trait SMRPersistentLog<RQ, OPM, POPT, LS>: OrderingProtocolLog<RQ, OPM> + PersistentDecisionLog<RQ, OPM, POPT, LS>
     where RQ: SerType,

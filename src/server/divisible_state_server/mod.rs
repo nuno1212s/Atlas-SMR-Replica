@@ -1,21 +1,19 @@
-mod state_transfer;
-
 use std::marker::PhantomData;
 use std::time::Instant;
 
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
-use atlas_core::log_transfer::LogTransferProtocol;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::permissioned::ViewTransferProtocol;
-use atlas_core::persistent_log::{DivisibleStateLog, PersistableStateTransferProtocol};
+use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_core::smr::networking::SMRNetworkNode;
-use atlas_core::smr::smr_decision_log::DecisionLog;
-use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
+use atlas_logging_core::decision_log::DecisionLog;
+use atlas_logging_core::log_transfer::LogTransferProtocol;
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Application, Request};
-use atlas_smr_application::state::divisible_state::{AppState, AppStateMessage, DivisibleState, InstallStateMessage};
+use atlas_smr_application::state::divisible_state::DivisibleState;
+use atlas_smr_core::networking::SMRNetworkNode;
+use atlas_smr_core::persistent_log::DivisibleStateLog;
+use atlas_smr_core::state_transfer::divisible_state::DivisibleStateTransfer;
 use atlas_smr_execution::TDivisibleStateExecutor;
 
 use crate::config::DivisibleStateReplicaConfig;
@@ -23,7 +21,9 @@ use crate::metric::RUN_LATENCY_TIME_ID;
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::{PermissionedProtocolHandling, Replica};
 use crate::server::divisible_state_server::state_transfer::DivStateTransfer;
-use crate::server::state_transfer::{init_state_transfer_handles, StateTransferMngr};
+use crate::server::state_transfer::init_state_transfer_handles;
+
+mod state_transfer;
 
 pub struct DivStReplica<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,

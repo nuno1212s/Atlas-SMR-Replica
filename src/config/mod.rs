@@ -1,23 +1,23 @@
 use std::marker::PhantomData;
 
-use atlas_common::node_id::NodeId;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::FullNetworkNode;
-use atlas_core::log_transfer::LogTransferProtocol;
+use atlas_smr_core::log_transfer::LogTransferProtocol;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
-use atlas_core::ordering_protocol::{OrderingProtocol, PermissionedOrderingProtocol};
+use atlas_core::ordering_protocol::OrderingProtocol;
 use atlas_core::ordering_protocol::permissioned::ViewTransferProtocol;
-use atlas_core::persistent_log::{DivisibleStateLog, MonolithicStateLog, PersistableStateTransferProtocol};
+use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_core::serialize::{Service};
-use atlas_core::smr::smr_decision_log::DecisionLog;
-use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
-use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
-use atlas_core::state_transfer::StateTransferProtocol;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::divisible_state::DivisibleState;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
+use atlas_smr_core::persistent_log::{DivisibleStateLog, MonolithicStateLog};
+use atlas_smr_core::serialize::Service;
+use atlas_smr_core::smr_decision_log::DecisionLog;
+use atlas_smr_core::state_transfer::divisible_state::DivisibleStateTransfer;
+use atlas_smr_core::state_transfer::monolithic_state::MonolithicStateTransfer;
+use atlas_smr_core::state_transfer::StateTransferProtocol;
 
 use crate::persistent_log::SMRPersistentLog;
 

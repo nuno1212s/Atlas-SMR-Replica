@@ -9,12 +9,12 @@ use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::persistent_log::MonolithicStateLog;
-use atlas_core::state_transfer::Checkpoint;
-use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_core::timeouts::Timeouts;
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::state::monolithic_state::{AppStateMessage, digest_state, InstallStateMessage, MonolithicState};
+use atlas_smr_core::persistent_log::MonolithicStateLog;
+use atlas_smr_core::state_transfer::Checkpoint;
+use atlas_smr_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
 
 use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};

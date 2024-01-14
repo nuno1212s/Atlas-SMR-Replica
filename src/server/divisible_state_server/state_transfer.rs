@@ -6,12 +6,11 @@ use log::error;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::persistent_log::DivisibleStateLog;
-use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
-use atlas_core::state_transfer::StateTransferProtocol;
 use atlas_core::timeouts::Timeouts;
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::state::divisible_state::{AppState, AppStateMessage, DivisibleState, InstallStateMessage};
+use atlas_smr_core::persistent_log::DivisibleStateLog;
+use atlas_smr_core::state_transfer::divisible_state::DivisibleStateTransfer;
 
 use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
 use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};
