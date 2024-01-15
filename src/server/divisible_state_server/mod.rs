@@ -36,7 +36,7 @@ pub struct DivStReplica<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL>
           ST: DivisibleStateTransfer<S, NT, PL> + PersistableStateTransferProtocol,
           LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, NT, PL, Exec<A::AppData>>,
           VT: ViewTransferProtocol<OP, NT> +,
-          PL: SMRPersistentLog<SMRReq<A::AppData>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static + DivisibleStateLog<S>,
+          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static + DivisibleStateLog<S>,
           NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static,
 {
     p: PhantomData<fn() -> (A, SE)>,
@@ -54,7 +54,7 @@ impl<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL> DivStReplica<RP, SE, S, A, OP, DL
     LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, NT, PL, Exec<A::AppData>> + 'static,
     ST: DivisibleStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
     VT: ViewTransferProtocol<OP, NT> + 'static,
-    PL: SMRPersistentLog<Request<A, S>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + DivisibleStateLog<S> + 'static,
+    PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + DivisibleStateLog<S> + 'static,
     NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     pub async fn bootstrap(cfg: DivisibleStateReplicaConfig<RP, S, A, OP, DL, ST, LT, VT, NT, PL>) -> Result<Self> {
         let DivisibleStateReplicaConfig {

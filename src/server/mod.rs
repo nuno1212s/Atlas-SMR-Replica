@@ -574,7 +574,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         Ok(())
     }
 
-    fn execute_order_protocol_message(&mut self, message: ShareableMessage<ProtocolMessage<D::Request, OP::Serialization>>) -> Result<()> {
+    fn execute_order_protocol_message(&mut self, message: ShareableMessage<ProtocolMessage<SMRReq<D>, OP::Serialization>>) -> Result<()> {
         let start = Instant::now();
 
         let exec_result = self.ordering_protocol.process_message(message)?;
@@ -634,7 +634,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         Ok(())
     }
 
-    fn execute_logged_decisions(&mut self, decisions: MaybeVec<LoggedDecision<D::Request>>) -> Result<()> {
+    fn execute_logged_decisions(&mut self, decisions: MaybeVec<LoggedDecision<SMRReq<D>>>) -> Result<()> {
         for decision in decisions.into_iter() {
             let (seq, requests, to_batch) = decision.into_inner();
 

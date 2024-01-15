@@ -12,6 +12,7 @@ use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::message::{ SystemMessage};
 use atlas_core::messages::ReplyMessage;
 use atlas_smr_core::serialize::Service;
+use atlas_smr_core::SMRReq;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 
 type RepliesType<S> = BatchReplies<S>;
@@ -73,9 +74,9 @@ impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
     }
 
     pub fn start<OP, ST, LP, VT>(mut self)
-        where OP: OrderingProtocolMessage<D::Request> + 'static,
+        where OP: OrderingProtocolMessage<SMRReq<D>> + 'static,
               ST: StateTransferMessage + 'static,
-              LP: LogTransferMessage<D::Request, OP> + 'static,
+              LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
               VT: ViewTransferProtocolMessage + 'static,
               NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
         std::thread::Builder::new().name(format!("{:?} // Reply thread", self.node_id))

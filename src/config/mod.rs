@@ -33,7 +33,7 @@ pub struct MonolithicStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
           VT: ViewTransferProtocol<OP, NT> + 'static,
           LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, NT, PL, Exec<A::AppData>> + 'static,
           NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
-          PL: SMRPersistentLog<Request<A, S>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> {
+          PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> {
     /// The application logic.
     pub service: A,
 
@@ -55,7 +55,7 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
         VT: ViewTransferProtocol<OP, NT> + 'static,
         LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, NT, PL, Exec<A::AppData>> + 'static,
         NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
-        PL: SMRPersistentLog<Request<A, S>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + DivisibleStateLog<S> {
+        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + DivisibleStateLog<S> {
     /// The application logic.
     pub service: A,
 
@@ -75,7 +75,7 @@ pub struct ReplicaConfig<RF, S, D, OP, DL, ST, LT, VT, NT, PL> where
     VT: ViewTransferProtocol<OP, NT> + 'static,
     LT: LogTransferProtocol<SMRReq<D>, OP, DL, NT, PL, Exec<D>> + 'static,
     NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
-    PL: SMRPersistentLog<D::Request, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> {
+    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> {
     /// Next sequence number attributed to a request by
     /// the consensus layer.
     pub next_consensus_seq: SeqNo,
