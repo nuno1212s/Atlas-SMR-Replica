@@ -22,8 +22,9 @@ use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_application::ExecutorHandle;
 use atlas_smr_application::serialize::ApplicationData;
+use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
-use crate::server::CHECKPOINT_PERIOD;
+use crate::server::{CHECKPOINT_PERIOD, Exec};
 use crate::server::state_transfer::{StateTransferThreadHandle, StateTransferWorkMessage};
 
 const CHANNEL_SIZE: usize = 128;
@@ -116,8 +117,8 @@ pub struct DecisionLogManager<V, RQ, OP, DL, LT, STM, NT, PL>
     where V: NetworkView,
           RQ: SerType,
           OP: LoggableOrderProtocol<RQ, NT>,
-          DL: DecisionLog<RQ, OP, NT, PL>,
-          LT: LogTransferProtocol<RQ, OP, DL, NT, PL>,
+          DL: DecisionLog<RQ, OP, NT, PL, WrappedExecHandle<RQ>>,
+          LT: LogTransferProtocol<RQ, OP, DL, NT, PL, WrappedExecHandle<RQ>>,
           STM: StateTransferMessage
 {
     decision_log: DL,
@@ -128,7 +129,7 @@ pub struct DecisionLogManager<V, RQ, OP, DL, LT, STM, NT, PL>
     active_phase: ActivePhase,
     rq_pre_processor: RequestPreProcessor<RQ>,
     state_transfer_handle: StateTransferThreadHandle<V, STM>,
-    executor_handle: ExecutorHandle<RQ>,
+    executor_handle: WrappedExecHandle<RQ>,
     pending_decisions_to_execute: Option<MaybeVec<LoggedDecision<RQ>>>,
     _ph: PhantomData<fn() -> (V, RQ, OP, NT, PL)>,
 }
@@ -137,8 +138,8 @@ impl<V, RQ, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, RQ, OP, DL, LT, STM, 
     where V: NetworkView + 'static,
           RQ: SerType + 'static,
           OP: LoggableOrderProtocol<RQ, NT> ,
-          DL: DecisionLog<RQ, OP, NT, PL> + Send ,
-          LT: LogTransferProtocol<RQ, OP, DL, NT, PL> + Send ,
+          DL: DecisionLog<RQ, OP, NT, PL, WrappedExecHandle<RQ>> + Send ,
+          LT: LogTransferProtocol<RQ, OP, DL, NT, PL, WrappedExecHandle<RQ>> + Send ,
           PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           NT: Send + Sync + 'static,
           STM: StateTransferMessage + 'static, {
@@ -147,7 +148,7 @@ impl<V, RQ, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, RQ, OP, DL, LT, STM, 
                                         persistent_log: PL, timeouts: Timeouts, node: Arc<NT>,
                                         rq_pre_processor: RequestPreProcessor<RQ>,
                                         state_transfer_thread_handle: StateTransferThreadHandle<V, STM>,
-                                        execution_handle: ExecutorHandle<RQ>)
+                                        execution_handle: WrappedExecHandle<RQ>)
                                         -> Result<DecisionLogHandle<V, RQ, OP::Serialization, OP::PersistableTypes, LT::Serialization>> {
         let (dl_work_tx, dl_work_rx) = channel::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Work Channel"));
 

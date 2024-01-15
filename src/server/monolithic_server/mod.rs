@@ -14,15 +14,17 @@ use atlas_logging_core::log_transfer::LogTransferProtocol;
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::state::monolithic_state::MonolithicState;
+use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::networking::SMRNetworkNode;
 use atlas_smr_core::persistent_log::MonolithicStateLog;
+use atlas_smr_core::SMRReq;
 use atlas_smr_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_smr_execution::TMonolithicStateExecutor;
 
 use crate::config::MonolithicStateReplicaConfig;
 use crate::metric::RUN_LATENCY_TIME_ID;
 use crate::persistent_log::SMRPersistentLog;
-use crate::server::{PermissionedProtocolHandling, Replica};
+use crate::server::{Exec, PermissionedProtocolHandling, Replica};
 use crate::server::monolithic_server::state_transfer::MonStateTransfer;
 use crate::server::state_transfer::init_state_transfer_handles;
 
@@ -32,14 +34,14 @@ mod state_transfer;
 pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
     where RP: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
-          A: Application<S> + Send ,
-          OP: LoggableOrderProtocol<Request<A, S>, NT> ,
-          DL: DecisionLog<Request<A, S>, OP, NT, PL> ,
-          ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol ,
-          LT: LogTransferProtocol<Request<A, S>, OP, DL, NT, PL> ,
-          VT: ViewTransferProtocol<OP, NT> ,
-          PL: SMRPersistentLog<Request<A, S>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
-          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> +'static, {
+          A: Application<S> + Send,
+          OP: LoggableOrderProtocol<SMRReq<A::AppData>, NT>,
+          DL: DecisionLog<SMRReq<A::AppData>, OP, NT, PL, Exec<A::AppData>>,
+          LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, NT, PL, Exec<A::AppData>>,
+          ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol,
+          VT: ViewTransferProtocol<OP, NT>,
+          PL: SMRPersistentLog<SMRReq<A::AppData>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
+          NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     p: PhantomData<fn() -> (A, ME)>,
     /// The inner replica object, responsible for the general replica things
     inner_replica: Replica<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL>,
@@ -51,12 +53,12 @@ impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, 
         ME: TMonolithicStateExecutor<A, S, NT> + 'static,
         S: MonolithicState + 'static,
         A: Application<S> + Send + 'static,
-        OP: LoggableOrderProtocol<Request<A, S>, NT> + Send + 'static,
-        DL: DecisionLog<Request<A, S>, OP, NT, PL> + 'static,
-        LT: LogTransferProtocol<Request<A, S>, OP, DL, NT, PL> + 'static,
+        OP: LoggableOrderProtocol<SMRReq<A::AppData>, NT> + Send + 'static,
+        DL: DecisionLog<SMRReq<A::AppData>, OP, NT, PL, Exec<A::AppData>> + 'static,
+        LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, NT, PL, Exec<A::AppData>> + 'static,
         VT: ViewTransferProtocol<OP, NT> + 'static,
         ST: MonolithicStateTransfer<S, NT, PL> + PersistableStateTransferProtocol + Send + 'static,
-        PL: SMRPersistentLog<Request<A, S>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
+        PL: SMRPersistentLog<SMRReq<A::AppData>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
         NT: SMRNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization> + 'static, {
     pub async fn bootstrap(cfg: MonolithicStateReplicaConfig<RP, S, A, OP, DL, ST, LT, VT, NT, PL>) -> Result<Self> {
         let MonolithicStateReplicaConfig {
@@ -66,6 +68,8 @@ impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, 
         } = cfg;
 
         let (executor_handle, executor_receiver) = ME::init_handle();
+
+        let executor_handle = WrappedExecHandle(executor_handle);
 
         let (handle, inner_handle) = init_state_transfer_handles();
 
