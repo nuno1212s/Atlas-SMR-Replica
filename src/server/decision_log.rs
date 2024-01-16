@@ -14,6 +14,7 @@ use atlas_communication::message::StoredMessage;
 use atlas_core::ordering_protocol::{Decision, DecisionMetadata, ExecutionResult, OrderingProtocol, ProtocolMessage};
 use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PersistentOrderProtocolTypes, PProof};
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
+use atlas_core::executor::DecisionExecutorHandle;
 use atlas_core::request_pre_processing::{PreProcessorMessage, RequestPreProcessor};
 use atlas_core::timeouts::{RqTimeout, Timeouts};
 use atlas_logging_core::decision_log::{DecisionLog, LoggedDecision, LoggedDecisionValue};
@@ -23,6 +24,7 @@ use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_smr_application::ExecutorHandle;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::exec::WrappedExecHandle;
+use atlas_smr_core::{SMRRawReq, SMRReq};
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use crate::server::{CHECKPOINT_PERIOD, Exec};
 use crate::server::state_transfer::{StateTransferThreadHandle, StateTransferWorkMessage};
@@ -113,43 +115,43 @@ pub struct DecisionLogWorkQueue<RQ, OPM, POT>
     work_queue: VecDeque<DecisionLogWorkMessage<RQ, OPM, POT>>,
 }
 
-pub struct DecisionLogManager<V, RQ, OP, DL, LT, STM, NT, PL>
+pub struct DecisionLogManager<V, R, OP, DL, LT, STM, NT, PL>
     where V: NetworkView,
-          RQ: SerType,
-          OP: LoggableOrderProtocol<RQ, NT>,
-          DL: DecisionLog<RQ, OP, NT, PL, WrappedExecHandle<RQ>>,
-          LT: LogTransferProtocol<RQ, OP, DL, NT, PL, WrappedExecHandle<RQ>>,
+          R: SerType,
+          OP: LoggableOrderProtocol<SMRRawReq<R>, NT>,
+          DL: DecisionLog<SMRRawReq<R>, OP, NT, PL, WrappedExecHandle<R>>,
+          LT: LogTransferProtocol<SMRRawReq<R>, OP, DL, NT, PL, WrappedExecHandle<R>>,
           STM: StateTransferMessage
 {
     decision_log: DL,
     log_transfer: LT,
-    work_receiver: ChannelSyncRx<DLWorkMessage<V, RQ, OP::Serialization, OP::PersistableTypes, LT::Serialization>>,
+    work_receiver: ChannelSyncRx<DLWorkMessage<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>>,
     order_protocol_tx: ChannelSyncTx<ReplicaWorkResponses>,
-    decision_log_pending_queue: DecisionLogWorkQueue<RQ, OP::Serialization, OP::PersistableTypes>,
+    decision_log_pending_queue: DecisionLogWorkQueue<SMRRawReq<R>, OP::Serialization, OP::PersistableTypes>,
     active_phase: ActivePhase,
-    rq_pre_processor: RequestPreProcessor<RQ>,
+    rq_pre_processor: RequestPreProcessor<SMRRawReq<R>>,
     state_transfer_handle: StateTransferThreadHandle<V, STM>,
-    executor_handle: WrappedExecHandle<RQ>,
-    pending_decisions_to_execute: Option<MaybeVec<LoggedDecision<RQ>>>,
-    _ph: PhantomData<fn() -> (V, RQ, OP, NT, PL)>,
+    executor_handle: WrappedExecHandle<R>,
+    pending_decisions_to_execute: Option<MaybeVec<LoggedDecision<SMRRawReq<R>>>>,
+    _ph: PhantomData<fn() -> (V, D, OP, NT, PL)>,
 }
 
-impl<V, RQ, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, RQ, OP, DL, LT, STM, NT, PL>
+impl<V, R, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, R, OP, DL, LT, STM, NT, PL>
     where V: NetworkView + 'static,
-          RQ: SerType + 'static,
-          OP: LoggableOrderProtocol<RQ, NT> ,
-          DL: DecisionLog<RQ, OP, NT, PL, WrappedExecHandle<RQ>> + Send ,
-          LT: LogTransferProtocol<RQ, OP, DL, NT, PL, WrappedExecHandle<RQ>> + Send ,
-          PL: PersistentDecisionLog<RQ, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
+          R: SerType,
+          OP: LoggableOrderProtocol<SMRRawReq<R>, NT>,
+          DL: DecisionLog<SMRRawReq<R>, OP, NT, PL, WrappedExecHandle<R>> + Send,
+          LT: LogTransferProtocol<SMRRawReq<R>, OP, DL, NT, PL, WrappedExecHandle<R>> + Send,
+          PL: PersistentDecisionLog<SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
           NT: Send + Sync + 'static,
           STM: StateTransferMessage + 'static, {
     /// Initialize the decision log
     pub fn initialize_decision_log_mngt(dl_config: DL::Config, lt_config: LT::Config,
                                         persistent_log: PL, timeouts: Timeouts, node: Arc<NT>,
-                                        rq_pre_processor: RequestPreProcessor<RQ>,
+                                        rq_pre_processor: RequestPreProcessor<SMRRawReq<R>>,
                                         state_transfer_thread_handle: StateTransferThreadHandle<V, STM>,
-                                        execution_handle: WrappedExecHandle<RQ>)
-                                        -> Result<DecisionLogHandle<V, RQ, OP::Serialization, OP::PersistableTypes, LT::Serialization>> {
+                                        execution_handle: WrappedExecHandle<R>)
+                                        -> Result<DecisionLogHandle<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>> {
         let (dl_work_tx, dl_work_rx) = channel::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Work Channel"));
 
         let (rp_work_tx, rp_work_rx) = channel::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Replica Resp Channel"));
@@ -229,7 +231,7 @@ impl<V, RQ, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, RQ, OP, DL, LT, STM, 
     }
 
     fn handle_decision_log_work(&mut self,
-                                dl_work: DecisionLogWorkMessage<RQ, OP::Serialization, OP::PersistableTypes>) -> Result<()> {
+                                dl_work: DecisionLogWorkMessage<SMRRawReq<R>, OP::Serialization, OP::PersistableTypes>) -> Result<()> {
         match self.active_phase {
             ActivePhase::DecisionLog => {
                 self.run_decision_log_work_message(dl_work)?;
@@ -242,7 +244,7 @@ impl<V, RQ, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, RQ, OP, DL, LT, STM, 
         Ok(())
     }
 
-    fn handle_log_transfer_work(&mut self, view: V, lt_work: LogTransferWorkMessage<RQ, OP::Serialization, LT::Serialization>) -> Result<()> {
+    fn handle_log_transfer_work(&mut self, view: V, lt_work: LogTransferWorkMessage<SMRRawReq<R>, OP::Serialization, LT::Serialization>) -> Result<()> {
         match self.active_phase {
             ActivePhase::LogTransfer => {
                 self.run_log_transfer_work_message(view, lt_work)?;
@@ -273,7 +275,7 @@ impl<V, RQ, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, RQ, OP, DL, LT, STM, 
         Ok(())
     }
 
-    fn run_decision_log_work_message(&mut self, dl_work: DecisionLogWorkMessage<RQ, OP::Serialization, OP::PersistableTypes>) -> Result<()> {
+    fn run_decision_log_work_message(&mut self, dl_work: DecisionLogWorkMessage<SMRRawReq<R>, OP::Serialization, OP::PersistableTypes>) -> Result<()> {
         match dl_work {
             DecisionLogWorkMessage::ClearSequenceNumber(clear_seq_no) => {
                 self.decision_log.clear_sequence_number(clear_seq_no)?;
@@ -299,7 +301,7 @@ impl<V, RQ, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, RQ, OP, DL, LT, STM, 
         Ok(())
     }
 
-    fn run_log_transfer_work_message(&mut self, view: V, lt_work: LogTransferWorkMessage<RQ, OP::Serialization, LT::Serialization>) -> Result<()> {
+    fn run_log_transfer_work_message(&mut self, view: V, lt_work: LogTransferWorkMessage<SMRRawReq<R>, OP::Serialization, LT::Serialization>) -> Result<()> {
         match lt_work {
             LogTransferWorkMessage::RequestLogTransfer => {
                 self.run_log_transfer_protocol(view)?;
@@ -377,7 +379,7 @@ impl<V, RQ, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, RQ, OP, DL, LT, STM, 
         Ok(())
     }
 
-    fn execute_logged_decisions(&mut self, decisions: MaybeVec<LoggedDecision<RQ>>) -> Result<()> {
+    fn execute_logged_decisions(&mut self, decisions: MaybeVec<LoggedDecision<SMRRawReq<R>>>) -> Result<()> {
         for decision in decisions.into_iter() {
             let (seq, requests, to_batch) = decision.into_inner();
 

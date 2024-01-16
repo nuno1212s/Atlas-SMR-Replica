@@ -125,7 +125,7 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     // The pre processor handle to the decision log
     rq_pre_processor: RequestPreProcessor<SMRReq<D>>,
     timeouts: Timeouts,
-    executor_handle: WrappedExecHandle<SMRReq<D>>,
+    executor_handle: WrappedExecHandle<D::Request>,
     // The networking layer for a Node in the network (either Client or Replica)
     node: Arc<NT>,
     // The handle to the execution and timeouts handler

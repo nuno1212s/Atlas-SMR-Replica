@@ -23,7 +23,7 @@ pub trait SMRPersistentLog<D, OPM, POPT, LS>: OrderingProtocolLog<SMRReq<D>, OPM
           LS: DecisionLogMessage<SMRReq<D>, OPM, POPT>  {
     type Config;
 
-    fn init_log<K, T, POS, PSP, DLPH>(executor: WrappedExecHandle<D>, db_path: K) -> Result<Self>
+    fn init_log<K, T, POS, PSP, DLPH>(executor: WrappedExecHandle<D::Request>, db_path: K) -> Result<Self>
         where
             K: AsRef<Path>,
             T: PersistentLogModeTrait,
@@ -42,8 +42,9 @@ impl<S, D, OPM, POPT, LS, STM> SMRPersistentLog<D, OPM, POPT, LS> for MonStatePe
           STM: StateTransferMessage + 'static {
     type Config = ();
 
-    fn init_log<K, T, POS, PSP, DLPH>(executor: WrappedExecHandle<D>, db_path: K) -> Result<Self>
-        where K: AsRef<Path>, T: PersistentLogModeTrait,
+    fn init_log<K, T, POS, PSP, DLPH>(executor: WrappedExecHandle<D::Request>, db_path: K) -> Result<Self>
+        where K: AsRef<Path>,
+              T: PersistentLogModeTrait,
               POS: OrderProtocolPersistenceHelper<SMRReq<D>, OPM, POPT> + Send + 'static,
               PSP: PersistableStateTransferProtocol + Send + 'static,
               DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
