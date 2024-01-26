@@ -133,7 +133,7 @@ pub struct DecisionLogManager<V, R, OP, DL, LT, STM, NT, PL>
     state_transfer_handle: StateTransferThreadHandle<V, STM>,
     executor_handle: WrappedExecHandle<R>,
     pending_decisions_to_execute: Option<MaybeVec<LoggedDecision<SMRRawReq<R>>>>,
-    _ph: PhantomData<fn() -> (V, D, OP, NT, PL)>,
+    _ph: PhantomData<fn() -> (V, R, OP, NT, PL)>,
 }
 
 impl<V, R, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, R, OP, DL, LT, STM, NT, PL>

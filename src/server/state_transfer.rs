@@ -1,16 +1,20 @@
 use std::marker::PhantomData;
+use std::sync::Arc;
 use either::Either;
 use log::error;
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotTx};
 use atlas_common::error::*;
-use atlas_common::ordering::{InvalidSeqNo, SeqNo};
+use atlas_common::ordering::SeqNo;
 use atlas_communication::message::StoredMessage;
+use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::ordering_protocol::ExecutionResult;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::timeouts::RqTimeout;
+use atlas_smr_core::serialize::StateSys;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::{StateTransferProtocol, STMsg, STPollResult, STResult};
+use crate::server::REPLICA_WAIT_TIME;
 
 pub const WORK_CHANNEL_SIZE: usize = 128;
 pub const RESPONSE_CHANNEL_SIZE: usize = 128;
@@ -48,7 +52,8 @@ pub struct StateTransferMngr<V, S, NT, PL, ST>
           V: NetworkView {
     handle: StateTransferThreadInnerHandle<V, ST::Serialization>,
     currently_running: bool,
-    latest_view: Option<V>,
+    node: Arc<NT>,
+    latest_view: V,
     phantom: PhantomData<(S, NT, PL)>,
 }
 
@@ -72,12 +77,14 @@ pub fn init_state_transfer_handles<V, ST>() -> (StateTransferThreadHandle<V, ST>
 
 impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
     where ST: StateTransferProtocol<S, NT, PL>,
-          V: NetworkView {
-    pub(crate) fn initialize_core_state_transfer(state_handle: StateTransferThreadInnerHandle<V, ST::Serialization>) -> Result<Self> {
+          V: NetworkView,
+          NT: RegularNetworkStub<StateSys<ST::Serialization>> {
+    pub(crate) fn initialize_core_state_transfer(node: Arc<NT>, state_handle: StateTransferThreadInnerHandle<V, ST::Serialization>, view: V) -> Result<Self> {
         Ok(Self {
             handle: state_handle,
             currently_running: false,
-            latest_view: None,
+            node,
+            latest_view: view,
             phantom: Default::default(),
         })
     }
@@ -113,20 +120,24 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
                 }
                 StateTransferWorkMessage::StateTransferMessage(view, message) => {
                     self.handle_view(&view);
-
-                    if self.currently_running {
-                        let result = state_transfer.process_message(view, message);
-
-                        if let Ok(st_result) = result {
-                            let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(st_result));
-                        }
-                    } else {
-                        let _ = state_transfer.handle_off_ctx_message(view, message);
-                    }
                 }
                 StateTransferWorkMessage::Timeout(view, timeout) => {
                     self.handle_view(&view);
                 }
+            }
+        }
+
+        while let Some(message) = self.node.incoming_stub().try_receive_messages(Some(REPLICA_WAIT_TIME))? {
+            let view = self.latest_view.clone();
+
+            if self.currently_running {
+                let result = state_transfer.process_message(view, message);
+
+                if let Ok(st_result) = result {
+                    let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(st_result));
+                }
+            } else {
+                let _ = state_transfer.handle_off_ctx_message(view, message);
             }
         }
 
@@ -137,13 +148,9 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
                     return Ok(());
                 }
                 STPollResult::Exec(message) => {
-                    if let Some(view) = self.latest_view.clone() {
-                        let res = state_transfer.process_message(view, message)?;
+                    let res = state_transfer.process_message(&self.latest_view, message)?;
 
-                        let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(res));
-                    } else {
-                        error!("Failed to process state transfer message due to view")
-                    }
+                    let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(res));
                 }
                 STPollResult::STResult(res) => {
                     let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(res));

@@ -4,15 +4,15 @@ use std::sync::Arc;
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::node_id::NodeId;
-use atlas_communication::protocol_node::ProtocolNetworkNode;
 use atlas_core::ordering_protocol::networking::serialize::{OrderingProtocolMessage, ViewTransferProtocolMessage};
 use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_smr_application::app::BatchReplies;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::message::{ SystemMessage};
 use atlas_core::messages::ReplyMessage;
+use atlas_smr_core::exec::{ReplyNode, ReplyType};
 use atlas_smr_core::serialize::Service;
-use atlas_smr_core::SMRReq;
+use atlas_smr_core::{SMRReply, SMRReq};
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 
 type RepliesType<S> = BatchReplies<S>;
@@ -73,12 +73,8 @@ impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
         handle
     }
 
-    pub fn start<OP, ST, LP, VT>(mut self)
-        where OP: OrderingProtocolMessage<SMRReq<D>> + 'static,
-              ST: StateTransferMessage + 'static,
-              LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
-              VT: ViewTransferProtocolMessage + 'static,
-              NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
+    pub fn start(mut self)
+        where NT: ReplyNode<SMRReply<D>> {
         std::thread::Builder::new().name(format!("{:?} // Reply thread", self.node_id))
             .spawn(move || {
                 loop {
@@ -101,24 +97,25 @@ impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
                         // but for now this will do
                         if let Some((message, last_peer_id)) = curr_send.take() {
                             let flush = peer_id != last_peer_id;
-                            self.send_node.send(message, last_peer_id, flush);
+
+                            self.send_node.send(ReplyType::Ordered, message, last_peer_id, flush).expect("Failed to send");
                         }
 
                         // store previous reply message and peer id,
                         // for the next iteration
                         //TODO: Choose ordered or unordered reply
-                        let message = SystemMessage::OrderedReply(ReplyMessage::new(
+                        let message = ReplyMessage::new(
                             session_id,
                             operation_id,
                             payload,
-                        ));
+                        );
 
                         curr_send = Some((message, peer_id));
                     }
 
                     // deliver last reply
                     if let Some((message, last_peer_id)) = curr_send {
-                        self.send_node.send(message, last_peer_id, true);
+                        self.send_node.send(ReplyType::Ordered, message, last_peer_id, true);
                     } else {
                         // slightly optimize code path;
                         // the previous if branch will always execute

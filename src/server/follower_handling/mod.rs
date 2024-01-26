@@ -5,7 +5,7 @@ use atlas_common::channel::ChannelSyncRx;
 use atlas_common::globals::ReadOnly;
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::StoredMessage;
-use atlas_communication::protocol_node::ProtocolNetworkNode;
+use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
 use atlas_core::followers::{FollowerChannelMsg, FollowerEvent, FollowerHandle};
 use atlas_core::messages::{Protocol};
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage, PermissionedOrderingProtocolMessage, ViewTransferProtocolMessage};
@@ -44,7 +44,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
               VT: ViewTransferProtocolMessage + 'static,
-              NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
+              NT: RegularNetworkStub<Service<D, OP, LP, VT>> {
         let (tx, rx) = channel::new_bounded_sync(1024,
                                                  Some("Follower Channel"));
 
@@ -65,7 +65,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
               VT: ViewTransferProtocolMessage + 'static,
-              NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
+              NT: RegularNetworkStub<Service<D, OP, LP, VT>> {
         std::thread::Builder::new()
             .name(format!(
                 "Follower Handling Thread for node {:?}",
@@ -82,7 +82,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
               VT: ViewTransferProtocolMessage + 'static,
-              NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
+              NT: RegularNetworkStub<Service<D, OP, LP, VT>> {
         loop {
             let message = self.rx.recv().unwrap();
 
@@ -156,7 +156,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
             ST: StateTransferMessage + 'static,
             LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
             VT: ViewTransferProtocolMessage + 'static,
-            NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
+            NT: RegularNetworkStub<Service<D, OP, LP, VT>> {
         if view.primary() == self.own_id {
             //Leaders don't send pre_prepares to followers in order to save bandwidth
             //as they already have to send the to all of the replicas
@@ -172,7 +172,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
 
         let targets = self.targets(view);
 
-        self.send_node.broadcast(message, targets.into_iter());
+        self.send_node.outgoing_stub().broadcast(message, targets.into_iter());
     }
 
     /// Handle us having sent a prepare message (notice how pre prepare are handled on reception
@@ -186,7 +186,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
             ST: StateTransferMessage + 'static,
             LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
             VT: ViewTransferProtocolMessage + 'static,
-            NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
+            NT: RegularNetworkStub<Service<D, OP, LP, VT>> {
         if prepare.header().from() != self.own_id {
             //We only broadcast our own prepare messages, not other peoples
             return;
@@ -199,7 +199,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
 
         let message = SystemMessage::from_fwd_protocol_message(StoredMessage::new(header, prepare));
 
-        self.send_node.broadcast(message, self.followers.iter().copied());
+        self.send_node.outgoing_stub().broadcast(message, self.followers.iter().copied());
     }
 
     /// Handle us having sent a commit message (notice how pre prepare are handled on reception
@@ -213,7 +213,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
             ST: StateTransferMessage + 'static,
             LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
             VT: ViewTransferProtocolMessage + 'static,
-            NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
+            NT: RegularNetworkStub<Service<D, OP, LP, VT>> {
         if commit.header().from() != self.own_id {
             //Like with prepares, we only broadcast our own commit messages
             return;
@@ -224,7 +224,7 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
 
         let message = SystemMessage::from_fwd_protocol_message(StoredMessage::new(header, commit));
 
-        self.send_node.broadcast(message, self.followers.iter().copied());
+        self.send_node.outgoing_stub().broadcast(message, self.followers.iter().copied());
     }
 
     ///
@@ -233,12 +233,12 @@ impl<D, OP, POP, NT> FollowersFollowing<D, OP, POP, NT> where
               ST: StateTransferMessage + 'static,
               LP: LogTransferMessage<SMRReq<D>, OP> + 'static,
               VT: ViewTransferProtocolMessage + 'static,
-              NT: ProtocolNetworkNode<Service<D, OP, ST, LP, VT>> {
+              NT: RegularNetworkStub<Service<D, OP, LP, VT>> {
         let header = msg.header().clone();
         let message = msg.message().clone();
 
         let network_msg = SystemMessage::from_fwd_protocol_message(StoredMessage::new(header, message));
 
-        self.send_node.broadcast(network_msg, self.followers.iter().copied());
+        self.send_node.outgoing_stub().broadcast(network_msg, self.followers.iter().copied());
     }
 }
