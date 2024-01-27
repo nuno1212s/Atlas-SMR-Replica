@@ -20,9 +20,9 @@ pub const WORK_CHANNEL_SIZE: usize = 128;
 pub const RESPONSE_CHANNEL_SIZE: usize = 128;
 
 /// A state transfer work message
-pub enum StateTransferWorkMessage<V, ST> where V: NetworkView {
+pub enum StateTransferWorkMessage<V> where V: NetworkView {
     RequestLatestState(V),
-    StateTransferMessage(V, StoredMessage<ST>),
+    ViewState(V),
     Timeout(V, Vec<RqTimeout>),
     ShouldRequestAppState(SeqNo, OneShotTx<ExecutionResult>),
 }
@@ -34,14 +34,14 @@ pub enum StateTransferProgress {
 }
 
 /// The handle to the state transfer thread.
-pub struct StateTransferThreadHandle<V, ST> where V: NetworkView, ST: StateTransferMessage {
-    work_tx: ChannelSyncTx<StateTransferWorkMessage<V, STMsg<ST>>>,
+pub struct StateTransferThreadHandle<V> where V: NetworkView {
+    work_tx: ChannelSyncTx<StateTransferWorkMessage<V>>,
     response_rx: ChannelSyncRx<StateTransferProgress>,
 }
 
 #[derive(Clone)]
-pub struct StateTransferThreadInnerHandle<V, ST> where V: NetworkView, ST: StateTransferMessage {
-    work_rx: ChannelSyncRx<StateTransferWorkMessage<V, STMsg<ST>>>,
+pub struct StateTransferThreadInnerHandle<V> where V: NetworkView {
+    work_rx: ChannelSyncRx<StateTransferWorkMessage<V>>,
     response_tx: ChannelSyncTx<StateTransferProgress>,
 }
 
@@ -50,16 +50,16 @@ pub struct StateTransferThreadInnerHandle<V, ST> where V: NetworkView, ST: State
 pub struct StateTransferMngr<V, S, NT, PL, ST>
     where ST: StateTransferProtocol<S, NT, PL>,
           V: NetworkView {
-    handle: StateTransferThreadInnerHandle<V, ST::Serialization>,
+    handle: StateTransferThreadInnerHandle<V>,
     currently_running: bool,
     node: Arc<NT>,
     latest_view: V,
     phantom: PhantomData<(S, NT, PL)>,
 }
 
-pub fn init_state_transfer_handles<V, ST>() -> (StateTransferThreadHandle<V, ST>,
-                                                StateTransferThreadInnerHandle<V, ST>)
-    where V: NetworkView, ST: StateTransferMessage {
+pub fn init_state_transfer_handles<V>() -> (StateTransferThreadHandle<V>,
+                                                StateTransferThreadInnerHandle<V>)
+    where V: NetworkView {
     let (work_tx, work_rx) =
         channel::new_bounded_sync(WORK_CHANNEL_SIZE, Some("State transfer Work Channel"));
     let (response_tx, response_rx) =
@@ -79,7 +79,7 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
     where ST: StateTransferProtocol<S, NT, PL>,
           V: NetworkView,
           NT: RegularNetworkStub<StateSys<ST::Serialization>> {
-    pub(crate) fn initialize_core_state_transfer(node: Arc<NT>, state_handle: StateTransferThreadInnerHandle<V, ST::Serialization>, view: V) -> Result<Self> {
+    pub(crate) fn initialize_core_state_transfer(node: Arc<NT>, state_handle: StateTransferThreadInnerHandle<V>, view: V) -> Result<Self> {
         Ok(Self {
             handle: state_handle,
             currently_running: false,
@@ -118,7 +118,7 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
 
                     Self::request_latest_state(view, state_transfer);
                 }
-                StateTransferWorkMessage::StateTransferMessage(view, message) => {
+                StateTransferWorkMessage::ViewState(view) => {
                     self.handle_view(&view);
                 }
                 StateTransferWorkMessage::Timeout(view, timeout) => {
@@ -176,10 +176,9 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
     }
 }
 
-impl<V, ST> StateTransferThreadHandle<V, ST>
-    where V: NetworkView,
-          ST: StateTransferMessage {
-    pub fn send_work_message(&self, msg: StateTransferWorkMessage<V, STMsg<ST>>) {
+impl<V> StateTransferThreadHandle<V>
+    where V: NetworkView {
+    pub fn send_work_message(&self, msg: StateTransferWorkMessage<V>) {
         let _ = self.work_tx.send_return(msg);
     }
 
@@ -199,8 +198,7 @@ impl<V, ST> StateTransferThreadHandle<V, ST>
     }
 }
 
-impl<V, ST> Clone for StateTransferThreadHandle<V, ST> where V: NetworkView,
-                                                             ST: StateTransferMessage {
+impl<V> Clone for StateTransferThreadHandle<V> where V: NetworkView {
     fn clone(&self) -> Self {
         Self {
             work_tx: self.work_tx.clone(),

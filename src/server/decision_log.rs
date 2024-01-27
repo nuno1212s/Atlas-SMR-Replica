@@ -115,13 +115,12 @@ pub struct DecisionLogWorkQueue<RQ, OPM, POT>
     work_queue: VecDeque<DecisionLogWorkMessage<RQ, OPM, POT>>,
 }
 
-pub struct DecisionLogManager<V, R, OP, DL, LT, STM, NT, PL>
+pub struct DecisionLogManager<V, R, OP, DL, LT, NT, PL>
     where V: NetworkView,
           R: SerType,
           OP: LoggableOrderProtocol<SMRRawReq<R>, NT>,
           DL: DecisionLog<SMRRawReq<R>, OP, NT, PL, WrappedExecHandle<R>>,
           LT: LogTransferProtocol<SMRRawReq<R>, OP, DL, NT, PL, WrappedExecHandle<R>>,
-          STM: StateTransferMessage
 {
     decision_log: DL,
     log_transfer: LT,
@@ -130,26 +129,25 @@ pub struct DecisionLogManager<V, R, OP, DL, LT, STM, NT, PL>
     decision_log_pending_queue: DecisionLogWorkQueue<SMRRawReq<R>, OP::Serialization, OP::PersistableTypes>,
     active_phase: ActivePhase,
     rq_pre_processor: RequestPreProcessor<SMRRawReq<R>>,
-    state_transfer_handle: StateTransferThreadHandle<V, STM>,
+    state_transfer_handle: StateTransferThreadHandle<V>,
     executor_handle: WrappedExecHandle<R>,
     pending_decisions_to_execute: Option<MaybeVec<LoggedDecision<SMRRawReq<R>>>>,
     _ph: PhantomData<fn() -> (V, R, OP, NT, PL)>,
 }
 
-impl<V, R, OP, DL, LT, STM, NT, PL> DecisionLogManager<V, R, OP, DL, LT, STM, NT, PL>
+impl<V, R, OP, DL, LT, NT, PL> DecisionLogManager<V, R, OP, DL, LT, NT, PL>
     where V: NetworkView + 'static,
           R: SerType,
           OP: LoggableOrderProtocol<SMRRawReq<R>, NT>,
           DL: DecisionLog<SMRRawReq<R>, OP, NT, PL, WrappedExecHandle<R>> + Send,
           LT: LogTransferProtocol<SMRRawReq<R>, OP, DL, NT, PL, WrappedExecHandle<R>> + Send,
           PL: PersistentDecisionLog<SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static,
-          NT: Send + Sync + 'static,
-          STM: StateTransferMessage + 'static, {
+          NT: Send + Sync + 'static, {
     /// Initialize the decision log
     pub fn initialize_decision_log_mngt(dl_config: DL::Config, lt_config: LT::Config,
                                         persistent_log: PL, timeouts: Timeouts, node: Arc<NT>,
                                         rq_pre_processor: RequestPreProcessor<SMRRawReq<R>>,
-                                        state_transfer_thread_handle: StateTransferThreadHandle<V, STM>,
+                                        state_transfer_thread_handle: StateTransferThreadHandle<V>,
                                         execution_handle: WrappedExecHandle<R>)
                                         -> Result<DecisionLogHandle<V, SMRRawReq<R>, OP::Serialization, OP::PersistableTypes, LT::Serialization>> {
         let (dl_work_tx, dl_work_rx) = channel::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Work Channel"));
