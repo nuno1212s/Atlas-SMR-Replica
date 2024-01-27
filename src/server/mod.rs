@@ -18,7 +18,7 @@ use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
-use atlas_communication::reconfiguration_node::NetworkInformationProvider;
+use atlas_communication::reconfiguration::NetworkInformationProvider;
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::executor::DecisionExecutorHandle;
 use atlas_core::messages::Message;
