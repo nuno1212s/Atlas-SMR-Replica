@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use atlas_common::ordering::SeqNo;
-use atlas_communication::FullNetworkNode;
+
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::OrderingProtocol;
 use atlas_core::ordering_protocol::permissioned::ViewTransferProtocol;
@@ -13,6 +13,7 @@ use atlas_smr_application::app::{Application, Request};
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::divisible_state::DivisibleState;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
+use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::{DivisibleStateLog, MonolithicStateLog};
 use atlas_smr_core::serialize::Service;
 use atlas_smr_core::SMRReq;
@@ -27,12 +28,12 @@ pub struct MonolithicStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
     where RF: ReconfigurationProtocol + 'static,
           S: MonolithicState + 'static,
           A: Application<S> + 'static,
-          OP: LoggableOrderProtocol<SMRReq<A::AppData>, NT> + 'static,
-          DL: DecisionLog<SMRReq<A::AppData>, OP, NT, PL, Exec<A::AppData>> + 'static,
-          ST: MonolithicStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
-          VT: ViewTransferProtocol<OP, NT> + 'static,
-          LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, NT, PL, Exec<A::AppData>> + 'static,
-          NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
+          OP: LoggableOrderProtocol<SMRReq<A::AppData>> + 'static,
+          DL: DecisionLog<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>> + 'static,
+          ST: MonolithicStateTransfer<S, PL> + 'static + PersistableStateTransferProtocol,
+          VT: ViewTransferProtocol<OP> + 'static,
+          LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, PL, Exec<A::AppData>> + 'static,
+          NT: SMRReplicaNetworkNode<RF::InformationProvider, RF::Serialization, A::AppData, OP::Serialization, LT::Serialization, VT::Serialization, ST::Serialization>,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> {
     /// The application logic.
     pub service: A,
@@ -49,12 +50,12 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
         RF: ReconfigurationProtocol + 'static,
         S: DivisibleState + 'static,
         A: Application<S> + 'static,
-        OP: LoggableOrderProtocol<SMRReq<A::AppData>, NT> + 'static,
-        DL: DecisionLog<SMRReq<A::AppData>, OP, NT, PL, Exec<A::AppData>> + 'static,
-        ST: DivisibleStateTransfer<S, NT, PL> + 'static + PersistableStateTransferProtocol,
-        VT: ViewTransferProtocol<OP, NT> + 'static,
-        LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, NT, PL, Exec<A::AppData>> + 'static,
-        NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<A::AppData, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
+        OP: LoggableOrderProtocol<SMRReq<A::AppData>> + 'static,
+        DL: DecisionLog<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>> + 'static,
+        ST: DivisibleStateTransfer<S, PL> + 'static + PersistableStateTransferProtocol,
+        VT: ViewTransferProtocol<OP> + 'static,
+        LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, PL, Exec<A::AppData>> + 'static,
+        NT: SMRReplicaNetworkNode<RF::InformationProvider, RF::Serialization, A::AppData, OP::Serialization, LT::Serialization, VT::Serialization,ST::Serialization>,
         PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + DivisibleStateLog<S> {
     /// The application logic.
     pub service: A,
@@ -69,12 +70,12 @@ pub struct DivisibleStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
 pub struct ReplicaConfig<RF, S, D, OP, DL, ST, LT, VT, NT, PL> where
     RF: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
-    OP: LoggableOrderProtocol<SMRReq<D>, NT> + 'static,
-    ST: StateTransferProtocol<S, NT, PL> + 'static,
-    DL: DecisionLog<SMRReq<D>, OP, NT, PL, Exec<D>> + 'static,
-    VT: ViewTransferProtocol<OP, NT> + 'static,
-    LT: LogTransferProtocol<SMRReq<D>, OP, DL, NT, PL, Exec<D>> + 'static,
-    NT: FullNetworkNode<RF::InformationProvider, RF::Serialization, Service<D, OP::Serialization, ST::Serialization, LT::Serialization, VT::Serialization>>,
+    OP: LoggableOrderProtocol<SMRReq<D>> + 'static,
+    ST: StateTransferProtocol<S, PL> + 'static,
+    DL: DecisionLog<SMRReq<D>, OP, PL, Exec<D>> + 'static,
+    VT: ViewTransferProtocol<OP> + 'static,
+    LT: LogTransferProtocol<SMRReq<D>, OP, DL, PL, Exec<D>> + 'static,
+    NT: SMRReplicaNetworkNode<RF::InformationProvider, RF::Serialization, D, OP::Serialization, LT::Serialization, VT::Serialization, ST::Serialization>,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> {
     /// Next sequence number attributed to a request by
     /// the consensus layer.

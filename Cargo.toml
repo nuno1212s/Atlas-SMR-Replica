@@ -25,6 +25,7 @@ default = ["serialize_serde"]
 thiserror = "1.0"
 anyhow = "1.0"
 log = "0.4.17"
+getset = "0.1.2"
 chrono = "0.4.23"
 atlas-communication = { path = "../Atlas-Communication" }
 atlas-smr-application = { path = "../Atlas-SMR-Application" }

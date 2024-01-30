@@ -10,7 +10,7 @@ use atlas_smr_application::app::BatchReplies;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::message::{ SystemMessage};
 use atlas_core::messages::ReplyMessage;
-use atlas_smr_core::exec::{ReplyNode, ReplyType};
+use atlas_smr_core::exec::{ReplyNode, RequestType};
 use atlas_smr_core::serialize::Service;
 use atlas_smr_core::{SMRReply, SMRReq};
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
@@ -98,7 +98,7 @@ impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
                         if let Some((message, last_peer_id)) = curr_send.take() {
                             let flush = peer_id != last_peer_id;
 
-                            self.send_node.send(ReplyType::Ordered, message, last_peer_id, flush).expect("Failed to send");
+                            self.send_node.send(RequestType::Ordered, message, last_peer_id, flush).expect("Failed to send");
                         }
 
                         // store previous reply message and peer id,
@@ -115,7 +115,7 @@ impl<D, NT: 'static> Replier<D, NT> where D: ApplicationData + 'static {
 
                     // deliver last reply
                     if let Some((message, last_peer_id)) = curr_send {
-                        self.send_node.send(ReplyType::Ordered, message, last_peer_id, true);
+                        self.send_node.send(RequestType::Ordered, message, last_peer_id, true);
                     } else {
                         // slightly optimize code path;
                         // the previous if branch will always execute
