@@ -3,12 +3,12 @@ use std::time::Instant;
 
 use atlas_common::error::*;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
-use atlas_core::ordering_protocol::networking::NetworkedOrderProtocol;
-use atlas_core::ordering_protocol::permissioned::ViewTransferProtocol;
+use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
+use atlas_core::ordering_protocol::permissioned::{ViewTransferProtocol, ViewTransferProtocolInitializer};
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_logging_core::decision_log::DecisionLog;
-use atlas_logging_core::log_transfer::LogTransferProtocol;
+use atlas_logging_core::decision_log::{DecisionLog, DecisionLogInitializer};
+use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::app::{Application};
 use atlas_smr_application::state::divisible_state::DivisibleState;
@@ -16,7 +16,7 @@ use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::DivisibleStateLog;
 use atlas_smr_core::SMRReq;
-use atlas_smr_core::state_transfer::divisible_state::DivisibleStateTransfer;
+use atlas_smr_core::state_transfer::divisible_state::{DivisibleStateTransfer, DivisibleStateTransferInitializer};
 use atlas_smr_execution::TDivisibleStateExecutor;
 
 use crate::config::DivisibleStateReplicaConfig;
@@ -33,10 +33,10 @@ pub struct DivStReplica<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL>
           S: DivisibleState + 'static,
           A: Application<S> + Send,
           OP: LoggableOrderProtocol<SMRReq<A::AppData>>,
-          LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, PL, Exec<A::AppData>>,
-          DL: DecisionLog<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>>,
+          LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL>,
+          DL: DecisionLog<SMRReq<A::AppData>, OP>,
           VT: ViewTransferProtocol<OP> +,
-          ST: DivisibleStateTransfer<S, PL> + PersistableStateTransferProtocol,
+          ST: DivisibleStateTransfer<S> + PersistableStateTransferProtocol,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + 'static + DivisibleStateLog<S>,
           NT: SMRReplicaNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, LT::Serialization, VT::Serialization, ST::Serialization> + 'static,
 {
@@ -51,16 +51,18 @@ impl<RP, SE, S, A, OP, DL, ST, LT, VT, NT, PL> DivStReplica<RP, SE, S, A, OP, DL
     S: DivisibleState + Send + 'static,
     A: Application<S> + Send + 'static,
     OP: LoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
-    DL: DecisionLog<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>> + 'static,
-    LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, PL, Exec<A::AppData>> + 'static,
+    DL: DecisionLog<SMRReq<A::AppData>, OP> + 'static,
+    LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL> + 'static,
     VT: ViewTransferProtocol<OP> + 'static,
-    ST: DivisibleStateTransfer<S, PL> + PersistableStateTransferProtocol + Send + 'static,
+    ST: DivisibleStateTransfer<S> + PersistableStateTransferProtocol + Send + 'static,
     PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + DivisibleStateLog<S> + 'static,
     NT: SMRReplicaNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, LT::Serialization, VT::Serialization, ST::Serialization, > + 'static, {
-
     pub async fn bootstrap(cfg: DivisibleStateReplicaConfig<RP, S, A, OP, DL, ST, LT, VT, NT, PL>) -> Result<Self>
-        where OP: NetworkedOrderProtocol<SMRReq<A::AppData>, NT::ProtocolNode> {
-
+        where OP: NetworkedOrderProtocolInitializer<SMRReq<A::AppData>, NT::ProtocolNode>,
+              VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
+              LT: LogTransferProtocolInitializer<SMRReq<A::AppData>, OP, DL, PL, Exec<A::AppData>, NT::ProtocolNode>,
+              DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>>,
+              ST: DivisibleStateTransferInitializer<S, NT::StateTransferNode, PL>, {
         let DivisibleStateReplicaConfig {
             service, replica_config, st_config
         } = cfg;

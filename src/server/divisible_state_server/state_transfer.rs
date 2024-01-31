@@ -12,7 +12,7 @@ use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::state::divisible_state::{AppState, AppStateMessage, DivisibleState, InstallStateMessage};
 use atlas_smr_core::persistent_log::DivisibleStateLog;
 use atlas_smr_core::serialize::StateSys;
-use atlas_smr_core::state_transfer::divisible_state::DivisibleStateTransfer;
+use atlas_smr_core::state_transfer::divisible_state::{DivisibleStateTransfer, DivisibleStateTransferInitializer};
 use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
 
 use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
@@ -21,7 +21,7 @@ use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerH
 pub struct DivStateTransfer<V, S, NT, PL, ST>
     where V: NetworkView,
           S: DivisibleState + 'static,
-          ST: DivisibleStateTransfer<S, PL>,
+          ST: DivisibleStateTransfer<S>,
           PL: DivisibleStateLog<S> {
     inner_state: StateTransferMngr<V, S, NT, PL, ST>,
 
@@ -34,7 +34,7 @@ pub struct DivStateTransfer<V, S, NT, PL, ST>
 impl<V, S, NT, PL, ST> DivStateTransfer<V, S, NT, PL, ST>
     where V: NetworkView + 'static,
           S: DivisibleState + Send + 'static,
-          ST: DivisibleStateTransfer<S, PL> + 'static,
+          ST: DivisibleStateTransfer<S> + 'static,
           PL: DivisibleStateLog<S> + 'static,
           NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>> {
     pub fn init_state_transfer_thread(state_tx: ChannelSyncTx<InstallStateMessage<S>>,
@@ -45,7 +45,9 @@ impl<V, S, NT, PL, ST> DivStateTransfer<V, S, NT, PL, ST>
                                       persistent_log: PL,
                                       handle: StateTransferThreadInnerHandle<V>,
                                       view: V)
-        where NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>> + 'static {
+        where ST: DivisibleStateTransferInitializer<S, NT, PL>,
+              NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>> + 'static {
+
         std::thread::Builder::new()
             .name(String::from("State transfer thread"))
             .spawn(move || {
@@ -93,13 +95,13 @@ impl<V, S, NT, PL, ST> DivStateTransfer<V, S, NT, PL, ST>
 
             match state {
                 AppState::StateDescriptor(descriptor) => {
-                    self.state_transfer_protocol.handle_state_desc_received_from_app(self.inner_state.node(), descriptor)?;
+                    self.state_transfer_protocol.handle_state_desc_received_from_app(descriptor)?;
                 }
                 AppState::StatePart(parts) => {
-                    self.state_transfer_protocol.handle_state_part_received_from_app(self.inner_state.node(), parts.into_vec())?;
+                    self.state_transfer_protocol.handle_state_part_received_from_app(parts.into_vec())?;
                 }
                 AppState::Done => {
-                    self.state_transfer_protocol.handle_state_finished_reception(self.inner_state.node())?;
+                    self.state_transfer_protocol.handle_state_finished_reception()?;
                     self.inner_state.notify_of_checkpoint(seq_no);
                 }
             }

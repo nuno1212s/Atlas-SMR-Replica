@@ -4,22 +4,22 @@ use std::time::Instant;
 use atlas_common::error::*;
 use atlas_common::ordering::Orderable;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
-use atlas_core::ordering_protocol::networking::NetworkedOrderProtocol;
-use atlas_core::ordering_protocol::permissioned::ViewTransferProtocol;
+use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
+use atlas_core::ordering_protocol::permissioned::{ViewTransferProtocol, ViewTransferProtocolInitializer};
 use atlas_core::ordering_protocol::PermissionedOrderingProtocol;
 use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
-use atlas_logging_core::decision_log::DecisionLog;
-use atlas_logging_core::log_transfer::LogTransferProtocol;
+use atlas_logging_core::decision_log::{DecisionLog, DecisionLogInitializer};
+use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::metric_duration;
-use atlas_smr_application::app::{Application, Request};
+use atlas_smr_application::app::Application;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
 use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::MonolithicStateLog;
 use atlas_smr_core::SMRReq;
-use atlas_smr_core::state_transfer::monolithic_state::MonolithicStateTransfer;
+use atlas_smr_core::state_transfer::monolithic_state::{MonolithicStateTransfer, MonolithicStateTransferInitializer};
 use atlas_smr_execution::TMonolithicStateExecutor;
 
 use crate::config::MonolithicStateReplicaConfig;
@@ -37,10 +37,10 @@ pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
           S: MonolithicState + 'static,
           A: Application<S> + Send,
           OP: LoggableOrderProtocol<SMRReq<A::AppData>>,
-          DL: DecisionLog<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>>,
-          LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, PL, Exec<A::AppData>>,
+          DL: DecisionLog<SMRReq<A::AppData>, OP>,
+          LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL>,
           VT: ViewTransferProtocol<OP>,
-          ST: MonolithicStateTransfer<S, PL> + PersistableStateTransferProtocol,
+          ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol,
           PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
           NT: SMRReplicaNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, LT::Serialization, VT::Serialization, ST::Serialization> + 'static, {
     p: PhantomData<fn() -> (A, ME)>,
@@ -55,14 +55,18 @@ impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, 
         S: MonolithicState + 'static,
         A: Application<S> + Send + 'static,
         OP: LoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
-        DL: DecisionLog<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>> + 'static,
-        LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL, PL, Exec<A::AppData>> + 'static,
+        DL: DecisionLog<SMRReq<A::AppData>, OP> + 'static,
+        LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL> + 'static,
         VT: ViewTransferProtocol<OP> + 'static,
-        ST: MonolithicStateTransfer<S, PL> + PersistableStateTransferProtocol + Send + 'static,
+        ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol + Send + 'static,
         PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization> + MonolithicStateLog<S> + 'static,
         NT: SMRReplicaNetworkNode<RP::InformationProvider, RP::Serialization, A::AppData, OP::Serialization, LT::Serialization, VT::Serialization, ST::Serialization> + 'static, {
     pub async fn bootstrap(cfg: MonolithicStateReplicaConfig<RP, S, A, OP, DL, ST, LT, VT, NT, PL>) -> Result<Self>
-        where OP: NetworkedOrderProtocol<SMRReq<A::AppData>, NT::ProtocolNode> {
+        where OP: NetworkedOrderProtocolInitializer<SMRReq<A::AppData>, NT::ProtocolNode>,
+              VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
+              LT: LogTransferProtocolInitializer<SMRReq<A::AppData>, OP, DL, PL, Exec<A::AppData>, NT::ProtocolNode>,
+              DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>>,
+              ST: MonolithicStateTransferInitializer<S, NT::StateTransferNode, PL> {
         let MonolithicStateReplicaConfig {
             service,
             replica_config,

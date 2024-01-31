@@ -16,16 +16,16 @@ use atlas_smr_application::state::monolithic_state::{AppStateMessage, digest_sta
 use atlas_smr_core::persistent_log::MonolithicStateLog;
 use atlas_smr_core::serialize::StateSys;
 use atlas_smr_core::state_transfer::Checkpoint;
-use atlas_smr_core::state_transfer::monolithic_state::MonolithicStateTransfer;
+use atlas_smr_core::state_transfer::monolithic_state::{MonolithicStateTransfer, MonolithicStateTransferInitializer};
 use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
-use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
 
+use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
 use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};
 
 pub struct MonStateTransfer<V, S, NT, PL, ST>
     where V: NetworkView,
           S: MonolithicState + 'static,
-          ST: MonolithicStateTransfer<S, PL>,
+          ST: MonolithicStateTransfer<S>,
           PL: MonolithicStateLog<S>
 {
     inner_state: StateTransferMngr<V, S, NT, PL, ST>,
@@ -40,7 +40,7 @@ pub struct MonStateTransfer<V, S, NT, PL, ST>
 impl<V, S, NT, PL, ST> MonStateTransfer<V, S, NT, PL, ST>
     where V: NetworkView + 'static,
           S: MonolithicState + Send + 'static,
-          ST: MonolithicStateTransfer<S, PL> + 'static,
+          ST: MonolithicStateTransfer<S> + 'static,
           PL: MonolithicStateLog<S> + 'static,
           NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>>
 {
@@ -52,8 +52,9 @@ impl<V, S, NT, PL, ST> MonStateTransfer<V, S, NT, PL, ST>
                                       persistent_log: PL,
                                       handle: StateTransferThreadInnerHandle<V>,
                                       view: V)
-        where NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>> + 'static {
-
+        where
+            ST: MonolithicStateTransferInitializer<S, NT, PL>,
+            NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>> + 'static {
         std::thread::Builder::new()
             .name(String::from("State transfer thread"))
             .spawn(move || {
@@ -111,7 +112,7 @@ impl<V, S, NT, PL, ST> MonStateTransfer<V, S, NT, PL, ST>
     /// receive digested checkpoints from the threadpoll and pass them to the state transfer protocol
     fn receive_digested_checkpoints(&mut self) -> Result<()> {
         while let Ok(checkpoint) = self.digested_state.1.try_recv() {
-            self.state_transfer_protocol.handle_state_received_from_app(&self.inner_state.node(), checkpoint.clone())?;
+            self.state_transfer_protocol.handle_state_received_from_app(checkpoint.clone())?;
             self.inner_state.notify_of_checkpoint(checkpoint.sequence_number());
         }
 

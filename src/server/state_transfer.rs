@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
+
 use either::Either;
+
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotTx};
 use atlas_common::error::*;
@@ -10,9 +12,10 @@ use atlas_core::ordering_protocol::ExecutionResult;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::timeouts::RqTimeout;
 use atlas_smr_core::serialize::StateSys;
-use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::{StateTransferProtocol, STPollResult, STResult};
+use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
+
 use crate::server::REPLICA_WAIT_TIME;
 
 pub const WORK_CHANNEL_SIZE: usize = 128;
@@ -47,7 +50,7 @@ pub struct StateTransferThreadInnerHandle<V> where V: NetworkView {
 /// The state transfer management struct, contains the base work handles to deliver work to the
 /// state transfer module
 pub struct StateTransferMngr<V, S, NT, PL, ST>
-    where ST: StateTransferProtocol<S, PL>,
+    where ST: StateTransferProtocol<S>,
           V: NetworkView {
     handle: StateTransferThreadInnerHandle<V>,
     currently_running: bool,
@@ -75,7 +78,7 @@ pub fn init_state_transfer_handles<V>() -> (StateTransferThreadHandle<V>,
 
 
 impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
-    where ST: StateTransferProtocol<S, PL>,
+    where ST: StateTransferProtocol<S>,
           V: NetworkView,
           NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>> {
     pub(crate) fn initialize_core_state_transfer(node: Arc<NT>, state_handle: StateTransferThreadInnerHandle<V>, view: V) -> Result<Self> {
@@ -109,13 +112,13 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
         while let Ok(work) = self.handle.work_rx.try_recv() {
             match work {
                 StateTransferWorkMessage::ShouldRequestAppState(seq, response) => {
-                    Self::should_request_app_state(&self.node, seq, state_transfer, response)
+                    Self::should_request_app_state(seq, state_transfer, response)
                 }
                 StateTransferWorkMessage::RequestLatestState(view) => {
                     self.currently_running = true;
                     self.handle_view(&view);
 
-                    Self::request_latest_state(&self.node, view, state_transfer);
+                    Self::request_latest_state(view, state_transfer);
                 }
                 StateTransferWorkMessage::ViewState(view) => {
                     self.handle_view(&view);
@@ -130,24 +133,24 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
             let view = self.latest_view.clone();
 
             if self.currently_running {
-                let result = state_transfer.process_message(&self.node, view, message);
+                let result = state_transfer.process_message(view, message);
 
                 if let Ok(st_result) = result {
                     let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(st_result));
                 }
             } else {
-                let _ = state_transfer.handle_off_ctx_message(&self.node, view, message);
+                let _ = state_transfer.handle_off_ctx_message(view, message);
             }
         }
 
         if self.currently_running {
-            match state_transfer.poll(&self.node)? {
+            match state_transfer.poll()? {
                 STPollResult::ReceiveMsg => {}
                 STPollResult::RePoll => {
                     return Ok(());
                 }
                 STPollResult::Exec(message) => {
-                    let res = state_transfer.process_message(&self.node, self.latest_view.clone(), message)?;
+                    let res = state_transfer.process_message(self.latest_view.clone(), message)?;
 
                     let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(res));
                 }
@@ -160,12 +163,12 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
         Ok(())
     }
 
-    fn request_latest_state(node: &Arc<NT>, view: V, state_transfer: &mut ST) {
-        let _ = state_transfer.request_latest_state(node, view);
+    fn request_latest_state(view: V, state_transfer: &mut ST) {
+        let _ = state_transfer.request_latest_state(view);
     }
 
-    fn should_request_app_state(node: &Arc<NT>, seq: SeqNo, state_transfer: &mut ST, result: OneShotTx<ExecutionResult>) {
-        let appstate_res = state_transfer.handle_app_state_requested(node, seq);
+    fn should_request_app_state(seq: SeqNo, state_transfer: &mut ST, result: OneShotTx<ExecutionResult>) {
+        let appstate_res = state_transfer.handle_app_state_requested(seq);
 
         if let Ok(appstate) = appstate_res {
             let _ = result.send(appstate);
