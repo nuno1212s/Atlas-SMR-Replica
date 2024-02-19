@@ -230,7 +230,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         let network_info = RP::init_default_information(reconfig_node)?;
 
-        let log_node_id = network_info.get_own_id();
+        let log_node_id = network_info.own_node_info().node_id();
 
         info!("{:?} // Bootstrapping replica, starting with networking", log_node_id);
 
