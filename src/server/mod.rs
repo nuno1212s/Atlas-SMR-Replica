@@ -18,7 +18,7 @@ use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::StoredMessage;
-use atlas_communication::reconfiguration::NetworkInformationProvider;
+use atlas_communication::reconfiguration::{NetworkInformationProvider, ReconfigurationMessageHandler};
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::executor::DecisionExecutorHandle;
 use atlas_core::messages::Message;
@@ -206,7 +206,6 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send,
         NT: SMRReplicaNetworkNode<RP::InformationProvider, RP::Serialization, D, OP::Serialization, LT::Serialization, VT::Serialization, ST::Serialization>,
         PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>, {
-
     async fn bootstrap(cfg: ReplicaConfig<RP, S, D, OP, DL, ST, LT, VT, NT, PL>,
                        executor: Exec<D>,
                        state: StateTransferThreadHandle<<Self as PermissionedProtocolHandling<D, VT, OP, NT>>::View>) -> Result<Self>
@@ -234,7 +233,9 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         info!("{:?} // Bootstrapping replica, starting with networking", log_node_id);
 
-        let (node, reconfiguration_handler) = NT::bootstrap(network_info.clone(), node_config).await?;
+        let reconfiguration_handler = ReconfigurationMessageHandler::initialize();
+
+        let node = NT::bootstrap(network_info.clone(), node_config, reconfiguration_handler.clone()).await?;
         let node = Arc::new(node);
 
         let (reconf_tx, reconf_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL,
