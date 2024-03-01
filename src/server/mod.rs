@@ -246,7 +246,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         let default_timeout = Duration::from_secs(3);
 
-        let (exec_tx, exec_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL, None);
+        let (exec_tx, exec_rx) = channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL, Some("Processed message channel"));
 
         debug!("{:?} // Initializing timeouts", log_node_id);
 
