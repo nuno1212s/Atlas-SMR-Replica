@@ -5,13 +5,15 @@ use log::error;
 
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
+use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::persistent_log::DivisibleStateLog;
-use atlas_core::state_transfer::divisible_state::DivisibleStateTransfer;
-use atlas_core::state_transfer::StateTransferProtocol;
 use atlas_core::timeouts::Timeouts;
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::state::divisible_state::{AppState, AppStateMessage, DivisibleState, InstallStateMessage};
+use atlas_smr_core::persistent_log::DivisibleStateLog;
+use atlas_smr_core::serialize::StateSys;
+use atlas_smr_core::state_transfer::divisible_state::{DivisibleStateTransfer, DivisibleStateTransferInitializer};
+use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
 
 use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
 use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};
@@ -19,7 +21,7 @@ use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerH
 pub struct DivStateTransfer<V, S, NT, PL, ST>
     where V: NetworkView,
           S: DivisibleState + 'static,
-          ST: DivisibleStateTransfer<S, NT, PL>,
+          ST: DivisibleStateTransfer<S>,
           PL: DivisibleStateLog<S> {
     inner_state: StateTransferMngr<V, S, NT, PL, ST>,
 
@@ -32,21 +34,24 @@ pub struct DivStateTransfer<V, S, NT, PL, ST>
 impl<V, S, NT, PL, ST> DivStateTransfer<V, S, NT, PL, ST>
     where V: NetworkView + 'static,
           S: DivisibleState + Send + 'static,
-          ST: DivisibleStateTransfer<S, NT, PL> + 'static,
+          ST: DivisibleStateTransfer<S> + 'static,
           PL: DivisibleStateLog<S> + 'static,
-          NT: Send + Sync + 'static {
+          NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>> {
     pub fn init_state_transfer_thread(state_tx: ChannelSyncTx<InstallStateMessage<S>>,
                                       checkpoint_rx: ChannelSyncRx<AppStateMessage<S>>,
                                       st_config: ST::Config,
                                       node: Arc<NT>,
                                       timeouts: Timeouts,
                                       persistent_log: PL,
-                                      handle: StateTransferThreadInnerHandle<V, ST::Serialization>) {
+                                      handle: StateTransferThreadInnerHandle<V>,
+                                      view: V)
+        where ST: DivisibleStateTransferInitializer<S, NT, PL>,
+              NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>> + 'static {
 
         std::thread::Builder::new()
             .name(String::from("State transfer thread"))
             .spawn(move || {
-                let inner_mngr = StateTransferMngr::initialize_core_state_transfer(handle)
+                let inner_mngr = StateTransferMngr::initialize_core_state_transfer(node.clone(), handle, view)
                     .expect("Failed to initialize state transfer inner layer");
 
                 let state_transfer_protocol = ST::initialize(st_config, timeouts,

@@ -8,21 +8,24 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::persistent_log::MonolithicStateLog;
-use atlas_core::state_transfer::Checkpoint;
-use atlas_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_core::timeouts::Timeouts;
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::state::monolithic_state::{AppStateMessage, digest_state, InstallStateMessage, MonolithicState};
-use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
+use atlas_smr_core::persistent_log::MonolithicStateLog;
+use atlas_smr_core::serialize::StateSys;
+use atlas_smr_core::state_transfer::Checkpoint;
+use atlas_smr_core::state_transfer::monolithic_state::{MonolithicStateTransfer, MonolithicStateTransferInitializer};
+use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
 
+use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
 use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};
 
 pub struct MonStateTransfer<V, S, NT, PL, ST>
     where V: NetworkView,
           S: MonolithicState + 'static,
-          ST: MonolithicStateTransfer<S, NT, PL>,
+          ST: MonolithicStateTransfer<S>,
           PL: MonolithicStateLog<S>
 {
     inner_state: StateTransferMngr<V, S, NT, PL, ST>,
@@ -37,9 +40,9 @@ pub struct MonStateTransfer<V, S, NT, PL, ST>
 impl<V, S, NT, PL, ST> MonStateTransfer<V, S, NT, PL, ST>
     where V: NetworkView + 'static,
           S: MonolithicState + Send + 'static,
-          ST: MonolithicStateTransfer<S, NT, PL> + 'static,
+          ST: MonolithicStateTransfer<S> + 'static,
           PL: MonolithicStateLog<S> + 'static,
-          NT: Send + Sync + 'static
+          NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>>
 {
     pub fn init_state_transfer_thread(state_tx: ChannelSyncTx<InstallStateMessage<S>>,
                                       checkpoint_rx: ChannelSyncRx<AppStateMessage<S>>,
@@ -47,11 +50,15 @@ impl<V, S, NT, PL, ST> MonStateTransfer<V, S, NT, PL, ST>
                                       node: Arc<NT>,
                                       timeouts: Timeouts,
                                       persistent_log: PL,
-                                      handle: StateTransferThreadInnerHandle<V, ST::Serialization>) {
+                                      handle: StateTransferThreadInnerHandle<V>,
+                                      view: V)
+        where
+            ST: MonolithicStateTransferInitializer<S, NT, PL>,
+            NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>> + 'static {
         std::thread::Builder::new()
             .name(String::from("State transfer thread"))
             .spawn(move || {
-                let inner_mngr = StateTransferMngr::initialize_core_state_transfer(handle)
+                let inner_mngr = StateTransferMngr::initialize_core_state_transfer(node.clone(), handle, view)
                     .expect("Failed to initialize state transfer inner layer");
 
                 let digest_app_state = channel::new_bounded_sync(5, Some("Digested App State Channel"));
