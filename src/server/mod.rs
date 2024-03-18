@@ -354,7 +354,7 @@ where
             log_node_id
         );
 
-        let mut quorum = loop {
+        let mut quorum = {
             let message = reconf_rx.recv().unwrap();
 
             match message {
@@ -363,7 +363,7 @@ where
                         .send_return(QuorumReconfigurationResponse::QuorumStableResponse(true))
                         .unwrap();
 
-                    break quorum;
+                    quorum
                 }
                 _ => {
                     return Err!(SMRReplicaError::AlterationReceivedBeforeStable);

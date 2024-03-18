@@ -215,7 +215,7 @@ where
         };
 
         std::thread::Builder::new()
-            .name(format!("Decision Log Thread"))
+            .name("Decision Log Thread".to_string())
             .spawn(move || {
                 let decision = DL::initialize_decision_log(
                     dl_config,
