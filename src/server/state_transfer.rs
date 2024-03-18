@@ -8,13 +8,13 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotTx};
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
-use atlas_core::ordering_protocol::ExecutionResult;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
+use atlas_core::ordering_protocol::ExecutionResult;
 use atlas_core::timeouts::RqTimeout;
 use atlas_smr_core::serialize::StateSys;
-use atlas_smr_core::state_transfer::{StateTransferProtocol, STPollResult, STResult};
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
+use atlas_smr_core::state_transfer::{STPollResult, STResult, StateTransferProtocol};
 
 use crate::server::REPLICA_WAIT_TIME;
 
@@ -22,7 +22,10 @@ pub const WORK_CHANNEL_SIZE: usize = 128;
 pub const RESPONSE_CHANNEL_SIZE: usize = 128;
 
 /// A state transfer work message
-pub enum StateTransferWorkMessage<V> where V: NetworkView {
+pub enum StateTransferWorkMessage<V>
+where
+    V: NetworkView,
+{
     RequestLatestState(V),
     ViewState(V),
     Timeout(V, Vec<RqTimeout>),
@@ -36,13 +39,19 @@ pub enum StateTransferProgress {
 }
 
 /// The handle to the state transfer thread.
-pub struct StateTransferThreadHandle<V> where V: NetworkView {
+pub struct StateTransferThreadHandle<V>
+where
+    V: NetworkView,
+{
     work_tx: ChannelSyncTx<StateTransferWorkMessage<V>>,
     response_rx: ChannelSyncRx<StateTransferProgress>,
 }
 
 #[derive(Clone)]
-pub struct StateTransferThreadInnerHandle<V> where V: NetworkView {
+pub struct StateTransferThreadInnerHandle<V>
+where
+    V: NetworkView,
+{
     work_rx: ChannelSyncRx<StateTransferWorkMessage<V>>,
     response_tx: ChannelSyncTx<StateTransferProgress>,
 }
@@ -50,8 +59,10 @@ pub struct StateTransferThreadInnerHandle<V> where V: NetworkView {
 /// The state transfer management struct, contains the base work handles to deliver work to the
 /// state transfer module
 pub struct StateTransferMngr<V, S, NT, PL, ST>
-    where ST: StateTransferProtocol<S>,
-          V: NetworkView {
+where
+    ST: StateTransferProtocol<S>,
+    V: NetworkView,
+{
     handle: StateTransferThreadInnerHandle<V>,
     currently_running: bool,
     node: Arc<NT>,
@@ -59,29 +70,43 @@ pub struct StateTransferMngr<V, S, NT, PL, ST>
     phantom: PhantomData<(S, NT, PL, ST)>,
 }
 
-pub fn init_state_transfer_handles<V>() -> (StateTransferThreadHandle<V>,
-                                            StateTransferThreadInnerHandle<V>)
-    where V: NetworkView {
+pub fn init_state_transfer_handles<V>() -> (
+    StateTransferThreadHandle<V>,
+    StateTransferThreadInnerHandle<V>,
+)
+where
+    V: NetworkView,
+{
     let (work_tx, work_rx) =
         channel::new_bounded_sync(WORK_CHANNEL_SIZE, Some("State transfer Work Channel"));
-    let (response_tx, response_rx) =
-        channel::new_bounded_sync(RESPONSE_CHANNEL_SIZE, Some("State Transfer Response Channel"));
+    let (response_tx, response_rx) = channel::new_bounded_sync(
+        RESPONSE_CHANNEL_SIZE,
+        Some("State Transfer Response Channel"),
+    );
 
-    (StateTransferThreadHandle {
-        work_tx,
-        response_rx,
-    }, StateTransferThreadInnerHandle {
-        work_rx,
-        response_tx,
-    })
+    (
+        StateTransferThreadHandle {
+            work_tx,
+            response_rx,
+        },
+        StateTransferThreadInnerHandle {
+            work_rx,
+            response_tx,
+        },
+    )
 }
 
-
 impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
-    where ST: StateTransferProtocol<S>,
-          V: NetworkView,
-          NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>> {
-    pub(crate) fn initialize_core_state_transfer(node: Arc<NT>, state_handle: StateTransferThreadInnerHandle<V>, view: V) -> Result<Self> {
+where
+    ST: StateTransferProtocol<S>,
+    V: NetworkView,
+    NT: StateTransferSendNode<ST::Serialization> + RegularNetworkStub<StateSys<ST::Serialization>>,
+{
+    pub(crate) fn initialize_core_state_transfer(
+        node: Arc<NT>,
+        state_handle: StateTransferThreadInnerHandle<V>,
+        view: V,
+    ) -> Result<Self> {
         Ok(Self {
             handle: state_handle,
             currently_running: false,
@@ -96,11 +121,17 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
     }
 
     pub fn notify_of_checkpoint(&self, seq: SeqNo) {
-        self.handle.response_tx.send_return(StateTransferProgress::CheckpointReceived(seq)).unwrap()
+        self.handle
+            .response_tx
+            .send_return(StateTransferProgress::CheckpointReceived(seq))
+            .unwrap()
     }
 
     fn handle_view(&mut self, view: &V) {
-        match view.sequence_number().index(self.latest_view.sequence_number()) {
+        match view
+            .sequence_number()
+            .index(self.latest_view.sequence_number())
+        {
             Either::Left(_) => {}
             Either::Right(_) => {
                 self.latest_view = view.clone();
@@ -129,14 +160,21 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
             }
         }
 
-        while let Some(message) = self.node.incoming_stub().try_receive_messages(Some(REPLICA_WAIT_TIME))? {
+        while let Some(message) = self
+            .node
+            .incoming_stub()
+            .try_receive_messages(Some(REPLICA_WAIT_TIME))?
+        {
             let view = self.latest_view.clone();
 
             if self.currently_running {
                 let result = state_transfer.process_message(view, message);
 
                 if let Ok(st_result) = result {
-                    let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(st_result));
+                    let _ = self
+                        .handle
+                        .response_tx
+                        .send_return(StateTransferProgress::StateTransferProgress(st_result));
                 }
             } else {
                 let _ = state_transfer.handle_off_ctx_message(view, message);
@@ -152,10 +190,16 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
                 STPollResult::Exec(message) => {
                     let res = state_transfer.process_message(self.latest_view.clone(), message)?;
 
-                    let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(res));
+                    let _ = self
+                        .handle
+                        .response_tx
+                        .send_return(StateTransferProgress::StateTransferProgress(res));
                 }
                 STPollResult::STResult(res) => {
-                    let _ = self.handle.response_tx.send_return(StateTransferProgress::StateTransferProgress(res));
+                    let _ = self
+                        .handle
+                        .response_tx
+                        .send_return(StateTransferProgress::StateTransferProgress(res));
                 }
             };
         }
@@ -167,7 +211,11 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
         let _ = state_transfer.request_latest_state(view);
     }
 
-    fn should_request_app_state(seq: SeqNo, state_transfer: &mut ST, result: OneShotTx<ExecutionResult>) {
+    fn should_request_app_state(
+        seq: SeqNo,
+        state_transfer: &mut ST,
+        result: OneShotTx<ExecutionResult>,
+    ) {
         let appstate_res = state_transfer.handle_app_state_requested(seq);
 
         if let Ok(appstate) = appstate_res {
@@ -179,7 +227,9 @@ impl<V, S, NT, PL, ST> StateTransferMngr<V, S, NT, PL, ST>
 }
 
 impl<V> StateTransferThreadHandle<V>
-    where V: NetworkView {
+where
+    V: NetworkView,
+{
     pub fn send_work_message(&self, msg: StateTransferWorkMessage<V>) {
         let _ = self.work_tx.send_return(msg);
     }
@@ -190,17 +240,16 @@ impl<V> StateTransferThreadHandle<V>
 
     pub fn try_recv_state_transfer_update(&self) -> Option<StateTransferProgress> {
         match self.response_rx.try_recv() {
-            Ok(progress) => {
-                Some(progress)
-            }
-            Err(_) => {
-                None
-            }
+            Ok(progress) => Some(progress),
+            Err(_) => None,
         }
     }
 }
 
-impl<V> Clone for StateTransferThreadHandle<V> where V: NetworkView {
+impl<V> Clone for StateTransferThreadHandle<V>
+where
+    V: NetworkView,
+{
     fn clone(&self) -> Self {
         Self {
             work_tx: self.work_tx.clone(),

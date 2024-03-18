@@ -1,5 +1,5 @@
-use atlas_metrics::{MetricLevel, MetricRegistry};
 use atlas_metrics::metrics::MetricKind;
+use atlas_metrics::{MetricLevel, MetricRegistry};
 
 /// Replica will get the 5XX metrics codes
 
@@ -48,23 +48,112 @@ pub const REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID: usize = 515;
 pub const STATE_TRANSFER_RUNTIME: &str = "STATE_TRANSFER_RUN_TIME";
 pub const STATE_TRANSFER_RUNTIME_ID: usize = 516;
 
-
 pub fn metrics() -> Vec<MetricRegistry> {
     vec![
-        (ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_POLL_TIME.to_string(), MetricKind::Duration, MetricLevel::Trace).into(),
-        (ORDERING_PROTOCOL_PROCESS_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME.to_string(), MetricKind::Duration, MetricLevel::Debug).into(),
-        (STATE_TRANSFER_PROCESS_TIME_ID, STATE_TRANSFER_PROCESS_TIME.to_string(), MetricKind::Duration, MetricLevel::Debug).into(),
-        (TIMEOUT_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME.to_string(), MetricKind::Duration, MetricLevel::Debug).into(),
-        (APP_STATE_DIGEST_TIME_ID, APP_STATE_DIGEST_TIME.to_string(), MetricKind::Duration, MetricLevel::Info).into(),
-        (EXECUTION_LATENCY_TIME_ID, EXECUTION_LATENCY_TIME.to_string(), MetricKind::Duration, MetricLevel::Debug).into(),
-        (EXECUTION_TIME_TAKEN_ID, EXECUTION_TIME_TAKEN.to_string(), MetricKind::Duration, MetricLevel::Debug).into(),
-        (RUN_LATENCY_TIME_ID, RUN_LATENCY_TIME.to_string(), MetricKind::Duration, MetricLevel::Debug).into(),
-        (REPLICA_RQ_QUEUE_SIZE_ID, REPLICA_RQ_QUEUE_SIZE.to_string(), MetricKind::Count, MetricLevel::Trace).into(),
-        (REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME.to_string(), MetricKind::Duration, MetricLevel::Trace).into(),
-        (REPLICA_TAKE_FROM_NETWORK_ID, REPLICA_TAKE_FROM_NETWORK.to_string(), MetricKind::Duration, MetricLevel::Trace).into(),
-        (REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_ORDERED_RQS_PROCESSED.to_string(), MetricKind::Counter, MetricLevel::Trace).into(),
-        (LOG_TRANSFER_PROCESS_TIME_ID, LOG_TRANSFER_PROCESS_TIME.to_string(), MetricKind::Duration, MetricLevel::Debug).into(),
-        (REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, REPLICA_PROTOCOL_RESP_PROCESS_TIME.to_string(), MetricKind::Duration, MetricLevel::Debug).into(),
-        (STATE_TRANSFER_PROCESS_TIME_ID, STATE_TRANSFER_PROCESS_TIME.to_string(), MetricKind::Duration, MetricLevel::Info).into(),
+        (
+            ORDERING_PROTOCOL_POLL_TIME_ID,
+            ORDERING_PROTOCOL_POLL_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Trace,
+        )
+            .into(),
+        (
+            ORDERING_PROTOCOL_PROCESS_TIME_ID,
+            ORDERING_PROTOCOL_PROCESS_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            STATE_TRANSFER_PROCESS_TIME_ID,
+            STATE_TRANSFER_PROCESS_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            TIMEOUT_PROCESS_TIME_ID,
+            TIMEOUT_PROCESS_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            APP_STATE_DIGEST_TIME_ID,
+            APP_STATE_DIGEST_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Info,
+        )
+            .into(),
+        (
+            EXECUTION_LATENCY_TIME_ID,
+            EXECUTION_LATENCY_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            EXECUTION_TIME_TAKEN_ID,
+            EXECUTION_TIME_TAKEN.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            RUN_LATENCY_TIME_ID,
+            RUN_LATENCY_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            REPLICA_RQ_QUEUE_SIZE_ID,
+            REPLICA_RQ_QUEUE_SIZE.to_string(),
+            MetricKind::Count,
+            MetricLevel::Trace,
+        )
+            .into(),
+        (
+            REPLICA_INTERNAL_PROCESS_TIME_ID,
+            REPLICA_INTERNAL_PROCESS_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Trace,
+        )
+            .into(),
+        (
+            REPLICA_TAKE_FROM_NETWORK_ID,
+            REPLICA_TAKE_FROM_NETWORK.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Trace,
+        )
+            .into(),
+        (
+            REPLICA_ORDERED_RQS_PROCESSED_ID,
+            REPLICA_ORDERED_RQS_PROCESSED.to_string(),
+            MetricKind::Counter,
+            MetricLevel::Trace,
+        )
+            .into(),
+        (
+            LOG_TRANSFER_PROCESS_TIME_ID,
+            LOG_TRANSFER_PROCESS_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID,
+            REPLICA_PROTOCOL_RESP_PROCESS_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Debug,
+        )
+            .into(),
+        (
+            STATE_TRANSFER_PROCESS_TIME_ID,
+            STATE_TRANSFER_PROCESS_TIME.to_string(),
+            MetricKind::Duration,
+            MetricLevel::Info,
+        )
+            .into(),
     ]
 }
