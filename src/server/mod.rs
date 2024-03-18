@@ -86,6 +86,7 @@ pub mod divisible_state_server;
 pub mod follower_handling;
 pub mod monolithic_server;
 pub mod state_transfer;
+mod unordered_rq_handler;
 // pub mod rq_finalizer;
 
 const REPLICA_MESSAGE_CHANNEL: usize = 1024;
@@ -390,12 +391,12 @@ where
             D,
             NT::ApplicationNode,
         >(4, node.app_node());
+        
+        unordered_rq_handler::start_unordered_rq_thread::<D>(unordered, executor.clone());
 
         let persistent_log =
             PL::init_log::<String, NoPersistentLog, OP, ST, DL>(executor.clone(), db_path)?;
-
-        let log = persistent_log.read_decision_log(OperationMode::BlockingSync)?;
-
+        
         let (rq_pre_processor, batch_input) = ordered.into();
 
         let op_args = OrderingProtocolArgs(
@@ -407,6 +408,8 @@ where
             quorum.clone(),
         );
 
+        let log = persistent_log.read_decision_log(OperationMode::BlockingSync)?;
+        
         let decision_handle = DecisionLogManager::<
             ViewType<D, VT, OP, NT, Self>,
             D::Request,

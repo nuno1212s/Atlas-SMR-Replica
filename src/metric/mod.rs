@@ -48,6 +48,10 @@ pub const REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID: usize = 515;
 pub const STATE_TRANSFER_RUNTIME: &str = "STATE_TRANSFER_RUN_TIME";
 pub const STATE_TRANSFER_RUNTIME_ID: usize = 516;
 
+/// How many unordered operations are we pushing to the executor
+pub const UNORDERED_OPS_PER_SECOND: &str = "UNORDERED_OPS_PUSHED";
+pub const UNORDERED_OPS_PER_SECOND_ID: usize = 517;
+
 pub fn metrics() -> Vec<MetricRegistry> {
     vec![
         (
@@ -153,6 +157,12 @@ pub fn metrics() -> Vec<MetricRegistry> {
             STATE_TRANSFER_PROCESS_TIME.to_string(),
             MetricKind::Duration,
             MetricLevel::Info,
+        )
+            .into(),
+        (
+            UNORDERED_OPS_PER_SECOND_ID,
+            UNORDERED_OPS_PER_SECOND.to_string(),
+            MetricKind::Counter
         )
             .into(),
     ]
