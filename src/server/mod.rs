@@ -332,7 +332,6 @@ where
         // start timeouts handler
         let timeouts = Timeouts::new::<SMRReq<D>>(
             log_node_id.clone(),
-            Duration::from_millis(1),
             default_timeout,
             exec_tx.clone(),
         );
