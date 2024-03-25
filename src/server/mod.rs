@@ -36,7 +36,7 @@ use atlas_core::ordering_protocol::reconfigurable_order_protocol::{
     ReconfigurableOrderProtocol, ReconfigurationAttemptResult,
 };
 use atlas_core::ordering_protocol::{
-    DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OrderingProtocol,
+    DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OPResult, OrderingProtocol,
     OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolMessage, ShareableMessage, View,
 };
 use atlas_core::persistent_log::OperationMode;
@@ -61,15 +61,16 @@ use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::message::SystemMessage;
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::request_pre_processing::initialize_request_pre_processor;
+use atlas_smr_core::serialize::SMRSysMsg;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::{STResult, StateTransferProtocol};
 use atlas_smr_core::SMRReq;
 
 use crate::config::ReplicaConfig;
 use crate::metric::{
-    ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID,
-    REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID,
-    REPLICA_TAKE_FROM_NETWORK_ID, TIMEOUT_PROCESS_TIME_ID,
+    ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID,
+    REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID,
+    REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, REPLICA_TAKE_FROM_NETWORK_ID, TIMEOUT_PROCESS_TIME_ID,
 };
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::decision_log::{
@@ -168,7 +169,7 @@ where
         OP::PersistableTypes,
         LT::Serialization,
     >,
-    // The pre processor handle to the decision log
+    // The pre-processor handle to the decision log
     rq_pre_processor: RequestPreProcessor<SMRReq<D>>,
     timeouts: Timeouts,
     executor_handle: WrappedExecHandle<D::Request>,
@@ -330,11 +331,8 @@ where
         debug!("{:?} // Initializing timeouts", log_node_id);
 
         // start timeouts handler
-        let timeouts = Timeouts::new::<SMRReq<D>>(
-            log_node_id.clone(),
-            default_timeout,
-            exec_tx.clone(),
-        );
+        let timeouts =
+            Timeouts::new::<SMRReq<D>>(log_node_id.clone(), default_timeout, exec_tx.clone());
 
         let replica_node_args = ReconfigurableNodeTypes::QuorumNode(reconf_tx, reply_rx);
 
@@ -390,12 +388,12 @@ where
             D,
             NT::ApplicationNode,
         >(4, node.app_node());
-        
+
         unordered_rq_handler::start_unordered_rq_thread::<D>(unordered, executor.clone());
 
         let persistent_log =
             PL::init_log::<String, NoPersistentLog, OP, ST, DL>(executor.clone(), db_path)?;
-        
+
         let (rq_pre_processor, batch_input) = ordered.into();
 
         let op_args = OrderingProtocolArgs(
@@ -408,7 +406,7 @@ where
         );
 
         let log = persistent_log.read_decision_log(OperationMode::BlockingSync)?;
-        
+
         let decision_handle = DecisionLogManager::<
             ViewType<D, VT, OP, NT, Self>,
             D::Request,
@@ -500,8 +498,18 @@ where
         Ok(())
     }
 
-    fn run_order_protocol(&mut self) -> Result<()> {
+    fn poll_order_protocol(&mut self) -> Result<OPResult<SMRReq<D>, OP::Serialization>> {
+        let start = Instant::now();
+
         let poll_result = self.ordering_protocol.poll()?;
+
+        metric_duration(ORDERING_PROTOCOL_POLL_TIME_ID, start.elapsed());
+
+        Ok(poll_result)
+    }
+
+    fn run_order_protocol(&mut self) -> Result<()> {
+        let poll_result = self.poll_order_protocol()?;
 
         match poll_result {
             OPPollResult::RePoll => {}
@@ -568,13 +576,6 @@ where
                                 ),
                             );
                         }
-                        _ => {
-                            error!(
-                                "{:?} // Received unsupported message {:?}",
-                                self.node.id(),
-                                message
-                            );
-                        }
                     }
                 } else {
                     // Receive timeouts in the beginning of the next iteration
@@ -626,21 +627,14 @@ where
     }
 
     fn poll_other_protocols(&mut self) -> Result<()> {
-        while let Some(state_result) = self.state_transfer_handle.try_recv_state_transfer_update() {
-            match state_result {
-                StateTransferProgress::StateTransferProgress(progress) => {
-                    self.handle_state_transfer_result(progress)?;
-                }
-                StateTransferProgress::CheckpointReceived(checkpoint) => {
-                    self.decision_log_handle
-                        .send_work(DLWorkMessage::init_dec_log_message(
-                            self.view(),
-                            DecisionLogWorkMessage::CheckpointDone(checkpoint),
-                        ));
-                }
-            }
-        }
+        self.poll_state_transfer_protocol()?;
 
+        self.poll_decision_log_protocol()?;
+
+        Ok(())
+    }
+
+    fn poll_decision_log_protocol(&mut self) -> Result<()> {
         while let Some(dec_log_res) = self.decision_log_handle.try_to_recv_resp() {
             match dec_log_res {
                 ReplicaWorkResponses::InstallSeqNo(seq_no) => {
@@ -648,6 +642,7 @@ where
                         "Installing sequence number {:?} into order protocol",
                         seq_no
                     );
+
                     self.ordering_protocol.install_seq_no(seq_no)?;
                     debug!("Done installing");
                 }
@@ -666,6 +661,25 @@ where
                     );
 
                     self.handle_log_transfer_done(first_seq, last_seq)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn poll_state_transfer_protocol(&mut self) -> Result<()> {
+        while let Some(state_result) = self.state_transfer_handle.try_recv_state_transfer_update() {
+            match state_result {
+                StateTransferProgress::StateTransferProgress(progress) => {
+                    self.handle_state_transfer_result(progress)?;
+                }
+                StateTransferProgress::CheckpointReceived(checkpoint) => {
+                    self.decision_log_handle
+                        .send_work(DLWorkMessage::init_dec_log_message(
+                            self.view(),
+                            DecisionLogWorkMessage::CheckpointDone(checkpoint),
+                        ));
                 }
             }
         }
@@ -1691,7 +1705,7 @@ impl NetworkView for MockView {
 /// Every `PERIOD` messages, the message log is cleared,
 /// and a new log checkpoint is initiated.
 /// TODO: Move this to an env variable as it can be highly dependent on the service implemented on top of it
-pub const CHECKPOINT_PERIOD: u32 = 1000;
+pub const CHECKPOINT_PERIOD: u32 = 10000;
 
 #[derive(Error, Debug)]
 pub enum SMRReplicaError {

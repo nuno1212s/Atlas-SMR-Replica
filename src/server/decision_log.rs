@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::time::Instant;
 
 use either::Either;
 use log::{error, info, warn};
@@ -31,9 +32,11 @@ use atlas_logging_core::log_transfer::{
     LTResult, LTTimeoutResult, LogTM, LogTransferProtocol, LogTransferProtocolInitializer,
 };
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
+use atlas_metrics::metrics::{metric_duration, metric_store_count};
 use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::SMRRawReq;
+use crate::metric::{DEC_LOG_PROCESS_TIME_ID, DEC_LOG_WORK_MSG_TIME_ID, DEC_LOG_WORK_QUEUE_SIZE_ID};
 
 use crate::server::state_transfer::{StateTransferThreadHandle, StateTransferWorkMessage};
 use crate::server::CHECKPOINT_PERIOD;
@@ -231,7 +234,7 @@ where
                 let mut decision_log_manager = Self {
                     decision_log: decision,
                     log_transfer,
-                    node: node,
+                    node,
                     work_receiver: dl_work_rx,
                     order_protocol_tx: rp_work_tx,
                     decision_log_pending_queue: DecisionLogWorkQueue {
@@ -261,6 +264,8 @@ where
 
         loop {
             let work = self.work_receiver.recv();
+            
+            let start = Instant::now();
 
             if let Ok(work_message) = work {
                 let DLWorkMessage { view, message } = work_message;
@@ -274,6 +279,8 @@ where
                     }
                 }
             }
+            
+            metric_duration(DEC_LOG_PROCESS_TIME_ID, start.elapsed());
         }
 
         Ok(())
@@ -565,16 +572,18 @@ where
     LTM: LogTransferMessage<RQ, OPM>,
 {
     pub fn send_work(&self, work_message: DLWorkMessage<V, RQ, OPM, POT, LTM>) {
+        let start = Instant::now();
+        
         let _ = self.work_tx.send_return(work_message);
+        
+        metric_duration(DEC_LOG_WORK_MSG_TIME_ID, start.elapsed());
+        metric_store_count(DEC_LOG_WORK_QUEUE_SIZE_ID, self.work_tx.len());
     }
 
     pub fn recv_resp(&self) -> ReplicaWorkResponses {
-        match self.status_rx.recv() {
-            Ok(message) => message,
-            Err(_) => {
-                unreachable!("Failed to receive message from the decision log thread")
-            }
-        }
+        self.status_rx.recv().unwrap_or_else(|_| {
+            unreachable!("Failed to receive message from the decision log thread")
+        })
     }
 
     pub fn try_to_recv_resp(&self) -> Option<ReplicaWorkResponses> {

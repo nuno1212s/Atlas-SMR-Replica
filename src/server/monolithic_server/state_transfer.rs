@@ -23,7 +23,7 @@ use atlas_smr_core::state_transfer::monolithic_state::{
 use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
 use atlas_smr_core::state_transfer::Checkpoint;
 
-use crate::metric::STATE_TRANSFER_PROCESS_TIME_ID;
+use crate::metric::{APP_STATE_DIGEST_TIME_ID, STATE_TRANSFER_PROCESS_TIME_ID};
 use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};
 
 pub struct MonStateTransfer<V, S, NT, PL, ST>
@@ -36,7 +36,9 @@ where
     inner_state: StateTransferMngr<V, S, NT, PL, ST>,
 
     state_tx_to_executor: ChannelSyncTx<InstallStateMessage<S>>,
+    // Receiver of checkpoints from the application
     checkpoint_rx_from_app: ChannelSyncRx<AppStateMessage<S>>,
+    
     digested_state: (
         ChannelSyncTx<Arc<ReadOnly<Checkpoint<S>>>>,
         ChannelSyncRx<Arc<ReadOnly<Checkpoint<S>>>>,
@@ -140,10 +142,13 @@ where
 
     /// handle the execution being finished with the app state
     fn execution_finished_with_appstate(&mut self, seq: SeqNo, appstate: S) -> Result<()> {
+        // Get a handle to the digested state return channel
         let return_tx = self.digested_state.0.clone();
 
         // Digest the app state before passing it on to the ordering protocols
         threadpool::execute(move || {
+            let start = Instant::now();
+            
             let result = digest_state(&appstate);
 
             match result {
@@ -151,6 +156,8 @@ where
                     let checkpoint = Checkpoint::new(seq, appstate, digest);
 
                     return_tx.send_return(checkpoint).unwrap();
+                    
+                    metric_duration(APP_STATE_DIGEST_TIME_ID, start.elapsed());
                 }
                 Err(error) => {
                     error!(

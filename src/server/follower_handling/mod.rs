@@ -191,7 +191,8 @@ where
 
         let targets = self.targets(view);
 
-        let _ = self.send_node
+        let _ = self
+            .send_node
             .outgoing_stub()
             .broadcast(message, targets.into_iter());
     }
@@ -222,7 +223,8 @@ where
 
         let message = SystemMessage::from_fwd_protocol_message(StoredMessage::new(header, prepare));
 
-        let _ = self.send_node
+        let _ = self
+            .send_node
             .outgoing_stub()
             .broadcast(message, self.followers.iter().copied());
     }
@@ -251,7 +253,8 @@ where
 
         let message = SystemMessage::from_fwd_protocol_message(StoredMessage::new(header, commit));
 
-        let _ = self.send_node
+        let _ = self
+            .send_node
             .outgoing_stub()
             .broadcast(message, self.followers.iter().copied());
     }
@@ -273,7 +276,8 @@ where
         let network_msg =
             SystemMessage::from_fwd_protocol_message(StoredMessage::new(header, message));
 
-        let _  = self.send_node
+        let _ = self
+            .send_node
             .outgoing_stub()
             .broadcast(network_msg, self.followers.iter().copied());
     }
