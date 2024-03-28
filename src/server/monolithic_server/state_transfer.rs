@@ -38,7 +38,7 @@ where
     state_tx_to_executor: ChannelSyncTx<InstallStateMessage<S>>,
     // Receiver of checkpoints from the application
     checkpoint_rx_from_app: ChannelSyncRx<AppStateMessage<S>>,
-    
+
     digested_state: (
         ChannelSyncTx<Arc<ReadOnly<Checkpoint<S>>>>,
         ChannelSyncRx<Arc<ReadOnly<Checkpoint<S>>>>,
@@ -148,7 +148,7 @@ where
         // Digest the app state before passing it on to the ordering protocols
         threadpool::execute(move || {
             let start = Instant::now();
-            
+
             let result = digest_state(&appstate);
 
             match result {
@@ -156,7 +156,7 @@ where
                     let checkpoint = Checkpoint::new(seq, appstate, digest);
 
                     return_tx.send_return(checkpoint).unwrap();
-                    
+
                     metric_duration(APP_STATE_DIGEST_TIME_ID, start.elapsed());
                 }
                 Err(error) => {

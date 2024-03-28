@@ -6,6 +6,9 @@ use std::time::Instant;
 use either::Either;
 use log::{error, info, warn};
 
+use crate::metric::{
+    DEC_LOG_PROCESS_TIME_ID, DEC_LOG_WORK_MSG_TIME_ID, DEC_LOG_WORK_QUEUE_SIZE_ID,
+};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
@@ -36,7 +39,6 @@ use atlas_metrics::metrics::{metric_duration, metric_store_count};
 use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::SMRRawReq;
-use crate::metric::{DEC_LOG_PROCESS_TIME_ID, DEC_LOG_WORK_MSG_TIME_ID, DEC_LOG_WORK_QUEUE_SIZE_ID};
 
 use crate::server::state_transfer::{StateTransferThreadHandle, StateTransferWorkMessage};
 use crate::server::CHECKPOINT_PERIOD;
@@ -264,7 +266,7 @@ where
 
         loop {
             let work = self.work_receiver.recv();
-            
+
             let start = Instant::now();
 
             if let Ok(work_message) = work {
@@ -279,7 +281,7 @@ where
                     }
                 }
             }
-            
+
             metric_duration(DEC_LOG_PROCESS_TIME_ID, start.elapsed());
         }
 
@@ -573,9 +575,9 @@ where
 {
     pub fn send_work(&self, work_message: DLWorkMessage<V, RQ, OPM, POT, LTM>) {
         let start = Instant::now();
-        
+
         let _ = self.work_tx.send_return(work_message);
-        
+
         metric_duration(DEC_LOG_WORK_MSG_TIME_ID, start.elapsed());
         metric_store_count(DEC_LOG_WORK_QUEUE_SIZE_ID, self.work_tx.len());
     }

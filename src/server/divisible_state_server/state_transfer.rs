@@ -104,7 +104,6 @@ where
 
     /// Receive checkpoints from the application layer
     fn receive_checkpoints(&mut self) -> Result<()> {
-        
         while let Ok(checkpoint) = self.checkpoint_rx_from_app.try_recv() {
             let (seq_no, state) = checkpoint.into_state();
 

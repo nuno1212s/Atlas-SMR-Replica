@@ -1,5 +1,5 @@
-use atlas_metrics::{MetricLevel, MetricRegistry};
 use atlas_metrics::metrics::MetricKind;
+use atlas_metrics::{MetricLevel, MetricRegistry};
 
 // Replica will get the 5XX metrics codes
 
@@ -147,14 +147,14 @@ pub fn metrics() -> Vec<MetricRegistry> {
             DEC_LOG_WORK_MSG_TIME_ID,
             DEC_LOG_WORK_MSG_TIME.to_string(),
             MetricKind::Duration,
-            MetricLevel::Trace
+            MetricLevel::Trace,
         )
             .into(),
         (
             DEC_LOG_WORK_QUEUE_SIZE_ID,
             DEC_LOG_WORK_QUEUE_SIZE.to_string(),
             MetricKind::Count,
-            MetricLevel::Trace
+            MetricLevel::Trace,
         )
             .into(),
         (
