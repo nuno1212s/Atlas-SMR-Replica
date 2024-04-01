@@ -10,7 +10,7 @@ use atlas_common::ordering::SeqNo;
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::ExecutionResult;
-use atlas_core::timeouts::RqTimeout;
+use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_smr_core::serialize::StateSys;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
@@ -28,7 +28,7 @@ where
 {
     RequestLatestState(V),
     ViewState(V),
-    Timeout(V, Vec<RqTimeout>),
+    Timeout(V, Vec<ModTimeout>),
     ShouldRequestAppState(SeqNo, OneShotTx<ExecutionResult>),
 }
 

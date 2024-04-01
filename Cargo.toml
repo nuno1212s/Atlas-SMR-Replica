@@ -27,6 +27,7 @@ anyhow = "1.0"
 log = "0.4.17"
 getset = "0.1.2"
 chrono = "0.4.23"
+itertools = "0"
 atlas-communication = { path = "../Atlas-Communication" }
 atlas-smr-application = { path = "../Atlas-SMR-Application" }
 atlas-common = { path = "../Atlas-Common" }

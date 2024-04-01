@@ -25,7 +25,7 @@ use atlas_core::ordering_protocol::{
     Decision, DecisionMetadata, ExecutionResult, OrderingProtocol, ProtocolMessage,
 };
 use atlas_core::request_pre_processing::{PreProcessorMessage, RequestPreProcessor};
-use atlas_core::timeouts::{RqTimeout, Timeouts};
+use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle};
 use atlas_logging_core::decision_log::{
     DecisionLog, DecisionLogInitializer, LoggedDecision, LoggedDecisionValue,
 };
@@ -52,22 +52,22 @@ const CHANNEL_SIZE: usize = 128;
 /// So the communication between them should match up as if they were all running on the same thread
 #[derive(Clone)]
 pub struct DecisionLogHandle<V, RQ, OPM, POT, LTM>
-where
-    V: NetworkView,
-    RQ: SerType,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
-    LTM: LogTransferMessage<RQ, OPM>,
+    where
+        V: NetworkView,
+        RQ: SerType,
+        OPM: OrderingProtocolMessage<RQ>,
+        POT: PersistentOrderProtocolTypes<RQ, OPM>,
+        LTM: LogTransferMessage<RQ, OPM>,
 {
     work_tx: ChannelSyncTx<DLWorkMessage<V, RQ, OPM, POT, LTM>>,
     status_rx: ChannelSyncRx<ReplicaWorkResponses>,
 }
 
 pub enum DecisionLogWorkMessage<RQ, OPM, POT>
-where
-    RQ: SerType,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
+    where
+        RQ: SerType,
+        OPM: OrderingProtocolMessage<RQ>,
+        POT: PersistentOrderProtocolTypes<RQ, OPM>,
 {
     ClearSequenceNumber(SeqNo),
     ClearUnfinishedDecisions,
@@ -87,43 +87,43 @@ pub enum ReplicaWorkResponses {
 }
 
 pub enum LogTransferWorkMessage<RQ, OPM, LTM>
-where
-    RQ: SerType,
-    OPM: OrderingProtocolMessage<RQ>,
-    LTM: LogTransferMessage<RQ, OPM>,
+    where
+        RQ: SerType,
+        OPM: OrderingProtocolMessage<RQ>,
+        LTM: LogTransferMessage<RQ, OPM>,
 {
     RequestLogTransfer,
     LogTransferMessage(StoredMessage<LogTM<RQ, OPM, LTM>>),
-    ReceivedTimeout(Vec<RqTimeout>),
+    ReceivedTimeout(Vec<ModTimeout>),
     TransferDone(SeqNo, SeqNo),
 }
 
 pub enum DLWorkMessageType<RQ, OPM, POT, LTM>
-where
-    RQ: SerType,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
-    LTM: LogTransferMessage<RQ, OPM>,
+    where
+        RQ: SerType,
+        OPM: OrderingProtocolMessage<RQ>,
+        POT: PersistentOrderProtocolTypes<RQ, OPM>,
+        LTM: LogTransferMessage<RQ, OPM>,
 {
     DecisionLog(DecisionLogWorkMessage<RQ, OPM, POT>),
     LogTransfer(LogTransferWorkMessage<RQ, OPM, LTM>),
 }
 
 pub struct DLWorkMessage<V, RQ, OPM, POT, LTM>
-where
-    V: NetworkView,
-    RQ: SerType,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
-    LTM: LogTransferMessage<RQ, OPM>,
+    where
+        V: NetworkView,
+        RQ: SerType,
+        OPM: OrderingProtocolMessage<RQ>,
+        POT: PersistentOrderProtocolTypes<RQ, OPM>,
+        LTM: LogTransferMessage<RQ, OPM>,
 {
     view: V,
     message: DLWorkMessageType<RQ, OPM, POT, LTM>,
 }
 
 pub enum DecisionLogResponseMessage<RQ>
-where
-    RQ: SerType,
+    where
+        RQ: SerType,
 {
     InstallSeqNo(SeqNo),
     TransferProtocolFinished(SeqNo, SeqNo, MaybeVec<LoggedDecision<RQ>>),
@@ -136,21 +136,21 @@ pub enum ActivePhase {
 
 /// The work queue for the decision log
 pub struct DecisionLogWorkQueue<RQ, OPM, POT>
-where
-    RQ: SerType,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
+    where
+        RQ: SerType,
+        OPM: OrderingProtocolMessage<RQ>,
+        POT: PersistentOrderProtocolTypes<RQ, OPM>,
 {
     work_queue: VecDeque<DecisionLogWorkMessage<RQ, OPM, POT>>,
 }
 
 pub struct DecisionLogManager<V, R, OP, DL, LT, NT, PL>
-where
-    V: NetworkView,
-    R: SerType,
-    OP: LoggableOrderProtocol<SMRRawReq<R>>,
-    DL: DecisionLog<SMRRawReq<R>, OP>,
-    LT: LogTransferProtocol<SMRRawReq<R>, OP, DL>,
+    where
+        V: NetworkView,
+        R: SerType,
+        OP: LoggableOrderProtocol<SMRRawReq<R>>,
+        DL: DecisionLog<SMRRawReq<R>, OP>,
+        LT: LogTransferProtocol<SMRRawReq<R>, OP, DL>,
 {
     decision_log: DL,
     log_transfer: LT,
@@ -160,7 +160,7 @@ where
     >,
     order_protocol_tx: ChannelSyncTx<ReplicaWorkResponses>,
     decision_log_pending_queue:
-        DecisionLogWorkQueue<SMRRawReq<R>, OP::Serialization, OP::PersistableTypes>,
+    DecisionLogWorkQueue<SMRRawReq<R>, OP::Serialization, OP::PersistableTypes>,
     active_phase: ActivePhase,
     rq_pre_processor: RequestPreProcessor<SMRRawReq<R>>,
     state_transfer_handle: StateTransferThreadHandle<V>,
@@ -170,26 +170,26 @@ where
 }
 
 impl<V, R, OP, DL, LT, NT, PL> DecisionLogManager<V, R, OP, DL, LT, NT, PL>
-where
-    V: NetworkView + 'static,
-    R: SerType,
-    OP: LoggableOrderProtocol<SMRRawReq<R>>,
-    DL: DecisionLog<SMRRawReq<R>, OP> + Send,
-    LT: LogTransferProtocol<SMRRawReq<R>, OP, DL> + Send,
-    PL: PersistentDecisionLog<
+    where
+        V: NetworkView + 'static,
+        R: SerType,
+        OP: LoggableOrderProtocol<SMRRawReq<R>>,
+        DL: DecisionLog<SMRRawReq<R>, OP> + Send,
+        LT: LogTransferProtocol<SMRRawReq<R>, OP, DL> + Send,
+        PL: PersistentDecisionLog<
             SMRRawReq<R>,
             OP::Serialization,
             OP::PersistableTypes,
             DL::LogSerialization,
         > + 'static,
-    NT: LogTransferSendNode<SMRRawReq<R>, OP::Serialization, LT::Serialization>,
+        NT: LogTransferSendNode<SMRRawReq<R>, OP::Serialization, LT::Serialization>,
 {
     /// Initialize the decision log
     pub fn initialize_decision_log_mngt(
         dl_config: DL::Config,
         lt_config: LT::Config,
         persistent_log: PL,
-        timeouts: Timeouts,
+        timeouts: TimeoutModHandle,
         node: Arc<NT>,
         rq_pre_processor: RequestPreProcessor<SMRRawReq<R>>,
         state_transfer_thread_handle: StateTransferThreadHandle<V>,
@@ -203,10 +203,10 @@ where
             LT::Serialization,
         >,
     >
-    where
-        NT: LogTransferSendNode<SMRRawReq<R>, OP::Serialization, LT::Serialization> + 'static,
-        DL: DecisionLogInitializer<SMRRawReq<R>, OP, PL, WrappedExecHandle<R>>,
-        LT: LogTransferProtocolInitializer<SMRRawReq<R>, OP, DL, PL, WrappedExecHandle<R>, NT>,
+        where
+            NT: LogTransferSendNode<SMRRawReq<R>, OP::Serialization, LT::Serialization> + 'static,
+            DL: DecisionLogInitializer<SMRRawReq<R>, OP, PL, WrappedExecHandle<R>>,
+            LT: LogTransferProtocolInitializer<SMRRawReq<R>, OP, DL, PL, WrappedExecHandle<R>, NT>,
     {
         let (dl_work_tx, dl_work_rx) =
             channel::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Work Channel"));
@@ -227,7 +227,7 @@ where
                     persistent_log.clone(),
                     execution_handle.clone(),
                 )
-                .expect("Failed initialize decision log");
+                    .expect("Failed initialize decision log");
 
                 let log_transfer =
                     LT::initialize(lt_config, timeouts, node.clone(), persistent_log)
@@ -284,8 +284,6 @@ where
 
             metric_duration(DEC_LOG_PROCESS_TIME_ID, start.elapsed());
         }
-
-        Ok(())
     }
 
     fn poll_pending_decisions(&mut self) -> Result<()> {
@@ -336,7 +334,7 @@ where
                         )?;
                     }
                     LogTransferWorkMessage::ReceivedTimeout(timeouts) => {
-                        match self.log_transfer.handle_timeout(view.clone(), timeouts)? {
+                        match self.log_transfer.handle_timeout(timeouts)? {
                             LTTimeoutResult::RunLTP => self.run_log_transfer_protocol(view)?,
                             LTTimeoutResult::NotNeeded => {
                                 // Keep executing the decision log...
@@ -431,7 +429,7 @@ where
                 };
             }
             LogTransferWorkMessage::ReceivedTimeout(timeout) => {
-                self.log_transfer.handle_timeout(view, timeout)?;
+                self.log_transfer.handle_timeout(timeout)?;
             }
             LogTransferWorkMessage::TransferDone(start, end) => {
                 info!(
@@ -444,7 +442,7 @@ where
                         match decision.sequence_number().index(start) {
                             Either::Left(_) => {}
                             Either::Right(_) => {
-                                let (seq, client_rqs, decision) = decision.into_inner();
+                                let (_seq, client_rqs, decision) = decision.into_inner();
 
                                 let _ = self.rq_pre_processor.send_return(PreProcessorMessage::DecidedBatch(client_rqs));
 
@@ -539,12 +537,12 @@ where
 }
 
 impl<V, RQ, OPM, POT, LTM> DLWorkMessage<V, RQ, OPM, POT, LTM>
-where
-    V: NetworkView,
-    RQ: SerType,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
-    LTM: LogTransferMessage<RQ, OPM>,
+    where
+        V: NetworkView,
+        RQ: SerType,
+        OPM: OrderingProtocolMessage<RQ>,
+        POT: PersistentOrderProtocolTypes<RQ, OPM>,
+        LTM: LogTransferMessage<RQ, OPM>,
 {
     pub fn initialize_message(view: V, work_msg: DLWorkMessageType<RQ, OPM, POT, LTM>) -> Self {
         Self {
@@ -566,12 +564,12 @@ where
 }
 
 impl<V, RQ, OPM, POT, LTM> DecisionLogHandle<V, RQ, OPM, POT, LTM>
-where
-    V: NetworkView,
-    RQ: SerType,
-    OPM: OrderingProtocolMessage<RQ>,
-    POT: PersistentOrderProtocolTypes<RQ, OPM>,
-    LTM: LogTransferMessage<RQ, OPM>,
+    where
+        V: NetworkView,
+        RQ: SerType,
+        OPM: OrderingProtocolMessage<RQ>,
+        POT: PersistentOrderProtocolTypes<RQ, OPM>,
+        LTM: LogTransferMessage<RQ, OPM>,
 {
     pub fn send_work(&self, work_message: DLWorkMessage<V, RQ, OPM, POT, LTM>) {
         let start = Instant::now();

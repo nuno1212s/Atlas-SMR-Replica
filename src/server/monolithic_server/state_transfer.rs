@@ -10,7 +10,7 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{channel, threadpool};
 use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
-use atlas_core::timeouts::Timeouts;
+use atlas_core::timeouts::timeout::TimeoutModHandle;
 use atlas_metrics::metrics::metric_duration;
 use atlas_smr_application::state::monolithic_state::{
     digest_state, AppStateMessage, InstallStateMessage, MonolithicState,
@@ -60,7 +60,7 @@ where
         checkpoint_rx: ChannelSyncRx<AppStateMessage<S>>,
         st_config: ST::Config,
         node: Arc<NT>,
-        timeouts: Timeouts,
+        timeouts: TimeoutModHandle,
         persistent_log: PL,
         handle: StateTransferThreadInnerHandle<V>,
         view: V,
