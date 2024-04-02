@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context};
 use either::Either;
 use itertools::Itertools;
-use log::{debug, error, info, trace};
+use tracing::{debug, error, info, trace};
 use thiserror::Error;
 
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
@@ -90,8 +90,8 @@ pub mod divisible_state_server;
 pub mod follower_handling;
 pub mod monolithic_server;
 pub mod state_transfer;
-mod unordered_rq_handler;
 mod timeout_handler;
+mod unordered_rq_handler;
 // pub mod rq_finalizer;
 
 const REPLICA_MESSAGE_CHANNEL: usize = 1024;
@@ -133,11 +133,11 @@ pub(crate) enum LogTransferState {
 pub type Exec<D: ApplicationData> = WrappedExecHandle<D::Request>;
 
 type ViewType<D, VT, OP, NT, R: PermissionedProtocolHandling<D, VT, OP, NT>> =
-<R as PermissionedProtocolHandling<D, VT, OP, NT>>::View;
+    <R as PermissionedProtocolHandling<D, VT, OP, NT>>::View;
 
 pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
-    where
-        NT: SMRReplicaNetworkNode<
+where
+    NT: SMRReplicaNetworkNode<
             RP::InformationProvider,
             RP::Serialization,
             D,
@@ -146,15 +146,15 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
             VT::Serialization,
             ST::Serialization,
         > + 'static,
-        D: ApplicationData + 'static,
-        OP: LoggableOrderProtocol<SMRReq<D>>,
-        DL: DecisionLog<SMRReq<D>, OP>,
-        LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
-        VT: ViewTransferProtocol<OP>,
-        ST: StateTransferProtocol<S> + PersistableStateTransferProtocol,
-        PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
+    D: ApplicationData + 'static,
+    OP: LoggableOrderProtocol<SMRReq<D>>,
+    DL: DecisionLog<SMRReq<D>, OP>,
+    LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
+    VT: ViewTransferProtocol<OP>,
+    ST: StateTransferProtocol<S> + PersistableStateTransferProtocol,
+    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + 'static,
-        RP: ReconfigurationProtocol + 'static,
+    RP: ReconfigurationProtocol + 'static,
 {
     execution_state: ExecutionPhase,
     transfer_states: TransferPhase,
@@ -233,10 +233,10 @@ pub trait ReconfigurableProtocolHandling {
 /// This is then combined with specialization in order to provide
 /// optional support for this type of protocols
 pub(crate) trait PermissionedProtocolHandling<D, VT, OP, NT>
-    where
-        OP: OrderingProtocol<SMRReq<D>>,
-        VT: ViewTransferProtocol<OP>,
-        D: ApplicationData,
+where
+    OP: OrderingProtocol<SMRReq<D>>,
+    VT: ViewTransferProtocol<OP>,
+    D: ApplicationData,
 {
     type View: NetworkView + 'static;
 
@@ -253,24 +253,24 @@ pub(crate) trait PermissionedProtocolHandling<D, VT, OP, NT>
 }
 
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
-    where
-        RP: ReconfigurationProtocol + 'static,
-        D: ApplicationData + 'static,
-        OP: LoggableOrderProtocol<SMRReq<D>> + Send,
-        DL: DecisionLog<SMRReq<D>, OP>,
-        LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
-        VT: ViewTransferProtocol<OP>,
-        ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send,
-        NT: SMRReplicaNetworkNode<
-            RP::InformationProvider,
-            RP::Serialization,
-            D,
-            OP::Serialization,
-            LT::Serialization,
-            VT::Serialization,
-            ST::Serialization,
-        >,
-        PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
+where
+    RP: ReconfigurationProtocol + 'static,
+    D: ApplicationData + 'static,
+    OP: LoggableOrderProtocol<SMRReq<D>> + Send,
+    DL: DecisionLog<SMRReq<D>, OP>,
+    LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
+    VT: ViewTransferProtocol<OP>,
+    ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send,
+    NT: SMRReplicaNetworkNode<
+        RP::InformationProvider,
+        RP::Serialization,
+        D,
+        OP::Serialization,
+        LT::Serialization,
+        VT::Serialization,
+        ST::Serialization,
+    >,
+    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>,
 {
     async fn bootstrap(
         cfg: ReplicaConfig<RP, S, D, OP, DL, ST, LT, VT, NT, PL>,
@@ -279,11 +279,11 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             <Self as PermissionedProtocolHandling<D, VT, OP, NT>>::View,
         >,
     ) -> Result<Self>
-        where
-            OP: NetworkedOrderProtocolInitializer<SMRReq<D>, NT::ProtocolNode>,
-            VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
-            LT: LogTransferProtocolInitializer<SMRReq<D>, OP, DL, PL, Exec<D>, NT::ProtocolNode>,
-            DL: DecisionLogInitializer<SMRReq<D>, OP, PL, Exec<D>>,
+    where
+        OP: NetworkedOrderProtocolInitializer<SMRReq<D>, NT::ProtocolNode>,
+        VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
+        LT: LogTransferProtocolInitializer<SMRReq<D>, OP, DL, PL, Exec<D>, NT::ProtocolNode>,
+        DL: DecisionLogInitializer<SMRReq<D>, OP, PL, Exec<D>>,
     {
         let ReplicaConfig {
             next_consensus_seq,
@@ -314,7 +314,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             node_config,
             reconfiguration_handler.clone(),
         )
-            .await?;
+        .await?;
         let node = Arc::new(node);
 
         let (reconf_tx, reconf_rx) = channel::new_bounded_sync(
@@ -334,7 +334,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         debug!("{:?} // Initializing timeouts", log_node_id);
 
-        let timeouts = initialize_timeouts(log_node_id.clone(), 2, 128, TimeoutHandler::from(exec_tx));
+        let timeouts =
+            initialize_timeouts(log_node_id.clone(), 2, 128, TimeoutHandler::from(exec_tx));
 
         let replica_node_args = ReconfigurableNodeTypes::QuorumNode(reconf_tx, reply_rx);
 
@@ -347,7 +348,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             reconfiguration_handler,
             OP::get_n_for_f(1),
         )
-            .await?;
+        .await?;
 
         info!(
             "{:?} // Waiting for reconfiguration protocol to stabilize",
@@ -978,7 +979,9 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             .into_iter()
             .group_by(|timeout| timeout.id().mod_id().clone())
             .into_iter()
-            .map(|(mod_id, timeouts)| (mod_id, timeouts.into_iter().map(ModTimeout::from).collect()))
+            .map(|(mod_id, timeouts)| {
+                (mod_id, timeouts.into_iter().map(ModTimeout::from).collect())
+            })
             .try_for_each(|(mod_id, timeouts)| {
                 if Arc::ptr_eq(&mod_id, &OP::mod_name()) {
                     self.rq_pre_processor
@@ -988,7 +991,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                 } else if Arc::ptr_eq(&mod_id, &ST::mod_name()) {
                     let timeout_work_msg = StateTransferWorkMessage::Timeout(self.view(), timeouts);
 
-                    self.state_transfer_handle.send_work_message(timeout_work_msg);
+                    self.state_transfer_handle
+                        .send_work_message(timeout_work_msg);
                 } else if Arc::ptr_eq(&mod_id, &LT::mod_name()) {
                     let lt_work_message = DLWorkMessage::init_log_transfer_message(
                         self.view(),
@@ -1297,18 +1301,18 @@ impl QuorumReconfig {
 }
 
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, VT, OP, NT>
-for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
-    where
-        D: ApplicationData + 'static,
-        OP: LoggableOrderProtocol<SMRReq<D>>,
-        DL: DecisionLog<SMRReq<D>, OP>,
-        LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
-        VT: ViewTransferProtocol<OP>,
-        ST: StateTransferProtocol<S> + PersistableStateTransferProtocol,
-        PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+where
+    D: ApplicationData + 'static,
+    OP: LoggableOrderProtocol<SMRReq<D>>,
+    DL: DecisionLog<SMRReq<D>, OP>,
+    LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
+    VT: ViewTransferProtocol<OP>,
+    ST: StateTransferProtocol<S> + PersistableStateTransferProtocol,
+    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + 'static,
-        RP: ReconfigurationProtocol + 'static,
-        NT: SMRReplicaNetworkNode<
+    RP: ReconfigurationProtocol + 'static,
+    NT: SMRReplicaNetworkNode<
             RP::InformationProvider,
             RP::Serialization,
             D,
@@ -1345,18 +1349,18 @@ for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 }
 
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, VT, OP, NT>
-for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
-    where
-        D: ApplicationData + 'static,
-        OP: LoggableOrderProtocol<SMRReq<D>> + PermissionedOrderingProtocol + 'static,
-        DL: DecisionLog<SMRReq<D>, OP> + 'static,
-        LT: LogTransferProtocol<SMRReq<D>, OP, DL> + 'static,
-        VT: ViewTransferProtocol<OP> + 'static,
-        ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send + 'static,
-        PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+where
+    D: ApplicationData + 'static,
+    OP: LoggableOrderProtocol<SMRReq<D>> + PermissionedOrderingProtocol + 'static,
+    DL: DecisionLog<SMRReq<D>, OP> + 'static,
+    LT: LogTransferProtocol<SMRReq<D>, OP, DL> + 'static,
+    VT: ViewTransferProtocol<OP> + 'static,
+    ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send + 'static,
+    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + 'static,
-        RP: ReconfigurationProtocol + 'static,
-        NT: SMRReplicaNetworkNode<
+    RP: ReconfigurationProtocol + 'static,
+    NT: SMRReplicaNetworkNode<
             RP::InformationProvider,
             RP::Serialization,
             D,
@@ -1501,16 +1505,16 @@ for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 
 /// Default protocol with no reconfiguration support handling
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling
-for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
-    where
-        RP: ReconfigurationProtocol + 'static,
-        D: ApplicationData + 'static,
-        OP: LoggableOrderProtocol<SMRReq<D>> + Send,
-        DL: DecisionLog<SMRReq<D>, OP>,
-        LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
-        VT: ViewTransferProtocol<OP>,
-        ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send,
-        NT: SMRReplicaNetworkNode<
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+where
+    RP: ReconfigurationProtocol + 'static,
+    D: ApplicationData + 'static,
+    OP: LoggableOrderProtocol<SMRReq<D>> + Send,
+    DL: DecisionLog<SMRReq<D>, OP>,
+    LT: LogTransferProtocol<SMRReq<D>, OP, DL>,
+    VT: ViewTransferProtocol<OP>,
+    ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send,
+    NT: SMRReplicaNetworkNode<
             RP::InformationProvider,
             RP::Serialization,
             D,
@@ -1519,7 +1523,7 @@ for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
             VT::Serialization,
             ST::Serialization,
         > + 'static,
-        PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
+    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + 'static,
 {
     default fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
@@ -1533,19 +1537,19 @@ for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 
 /// Implement reconfigurable order protocol support
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling
-for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
-    where
-        RP: ReconfigurationProtocol + 'static,
-        D: ApplicationData + 'static,
-        OP: LoggableOrderProtocol<SMRReq<D>>
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+where
+    RP: ReconfigurationProtocol + 'static,
+    D: ApplicationData + 'static,
+    OP: LoggableOrderProtocol<SMRReq<D>>
         + ReconfigurableOrderProtocol<RP::Serialization>
         + Send
         + 'static,
-        DL: DecisionLog<SMRReq<D>, OP> + 'static,
-        LT: LogTransferProtocol<SMRReq<D>, OP, DL> + 'static,
-        VT: ViewTransferProtocol<OP> + 'static,
-        ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send + 'static,
-        NT: SMRReplicaNetworkNode<
+    DL: DecisionLog<SMRReq<D>, OP> + 'static,
+    LT: LogTransferProtocol<SMRReq<D>, OP, DL> + 'static,
+    VT: ViewTransferProtocol<OP> + 'static,
+    ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send + 'static,
+    NT: SMRReplicaNetworkNode<
             RP::InformationProvider,
             RP::Serialization,
             D,
@@ -1554,7 +1558,7 @@ for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
             VT::Serialization,
             ST::Serialization,
         > + 'static,
-        PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
+    PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + 'static,
 {
     fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {

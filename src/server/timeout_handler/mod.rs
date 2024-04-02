@@ -14,8 +14,6 @@ impl TimeoutWorkerResponder for TimeoutHandler {
 
 impl From<ChannelSyncTx<Vec<Timeout>>> for TimeoutHandler {
     fn from(value: ChannelSyncTx<Vec<Timeout>>) -> Self {
-        Self {
-            tx: value,
-        }
+        Self { tx: value }
     }
 }

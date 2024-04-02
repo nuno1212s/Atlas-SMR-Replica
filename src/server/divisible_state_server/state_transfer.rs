@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use log::error;
+use tracing::error;
 
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;

@@ -9,7 +9,7 @@ use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::ExecutorHandle;
 use atlas_smr_core::request_pre_processing::UnorderedRqHandles;
 use atlas_smr_core::SMRReq;
-use log::error;
+use tracing::error;
 
 pub(super) fn start_unordered_rq_thread<O: ApplicationData>(
     unordered_rqs: UnorderedRqHandles<SMRReq<O>>,

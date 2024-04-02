@@ -133,7 +133,7 @@ where
             ::<<Replica::<RP, S, A::AppData, OP, DL, ST, LT, VT, NT, PL> as PermissionedProtocolHandling<A::AppData, VT, OP, NT>>::View,
             S, NT::StateTransferNode, PL, ST>
         ::init_state_transfer_thread(state_tx, checkpoint_rx, st_config,
-                                     node.state_transfer_node().clone(), 
+                                     node.state_transfer_node().clone(),
                                      inner_replica.timeouts.gen_mod_handle_with_name(ST::mod_name()),
                                      inner_replica.persistent_log.clone(),
                                      inner_handle,
