@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context};
 use either::Either;
 use itertools::Itertools;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, instrument, trace};
 use thiserror::Error;
 
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
@@ -47,8 +47,8 @@ use atlas_core::reconfiguration_protocol::{
     QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeTypes,
     ReconfigurationProtocol,
 };
+use atlas_core::request_pre_processing::RequestPreProcessorTimeout;
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
-use atlas_core::request_pre_processing::{PreProcessorMessage, RequestPreProcessor};
 use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_core::timeouts::{initialize_timeouts, Timeout, TimeoutIdentification, TimeoutsHandle};
 use atlas_logging_core::decision_log::{
@@ -62,7 +62,7 @@ use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::message::{StateTransfer, SystemMessage};
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
-use atlas_smr_core::request_pre_processing::initialize_request_pre_processor;
+use atlas_smr_core::request_pre_processing::{initialize_request_pre_processor, RequestPreProcessing, RequestPreProcessor};
 use atlas_smr_core::serialize::SMRSysMsg;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::{STResult, StateTransferProtocol};
@@ -551,10 +551,7 @@ where
                         SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
                             // Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
                             self.rq_pre_processor
-                                .send_return(PreProcessorMessage::ForwardedRequests(
-                                    StoredMessage::new(header, fwd_reqs),
-                                ))
-                                .unwrap();
+                                .process_forwarded_requests(StoredMessage::new(header, fwd_reqs))?;
                         }
                         SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
                             let message = fwd_protocol.into_inner();
@@ -869,6 +866,7 @@ where
         Ok(())
     }
 
+    #[instrument(skip_all, fields(decisions = decisions.len()))]
     fn execute_logged_decisions(
         &mut self,
         decisions: MaybeVec<LoggedDecision<SMRReq<D>>>,
@@ -878,7 +876,7 @@ where
 
             if let Err(err) = self
                 .rq_pre_processor
-                .send_return(PreProcessorMessage::DecidedBatch(requests))
+                .process_decided_batch(requests)
             {
                 error!("Error sending decided batch to pre processor: {:?}", err);
             }
@@ -972,7 +970,11 @@ where
         Ok(())
     }
 
+    #[instrument(skip_all, fields(timeout_len = timeouts.len()))]
     fn timeout_received(&mut self, timeouts: Vec<Timeout>) -> Result<()> {
+        
+        info!("Processing {} timeouts", timeouts.len());
+        
         let start = Instant::now();
 
         timeouts
@@ -980,20 +982,28 @@ where
             .group_by(|timeout| timeout.id().mod_id().clone())
             .into_iter()
             .map(|(mod_id, timeouts)| {
-                (mod_id, timeouts.into_iter().map(ModTimeout::from).collect())
+                (mod_id, timeouts.into_iter().map(ModTimeout::from).collect::<Vec<_>>())
             })
             .try_for_each(|(mod_id, timeouts)| {
                 if Arc::ptr_eq(&mod_id, &OP::mod_name()) {
+                    info!("Delivering {} timeouts to ordering protocol {}", timeouts.len(), &mod_id);
+                    
                     self.rq_pre_processor
-                        .process_timeouts(timeouts, self.processed_timeout.0.clone());
+                        .process_timeouts(timeouts, self.processed_timeout.0.clone())?;
                 } else if Arc::ptr_eq(&mod_id, &RP::mod_name()) {
+                    info!("Delivering {} timeouts to reconfiguration protocol {}", timeouts.len(), &mod_id);
+                    
                     self.reconfig_protocol.handle_timeouts_safe(timeouts)?;
                 } else if Arc::ptr_eq(&mod_id, &ST::mod_name()) {
+                    info!("Delivering {} timeouts to state transfer protocol {}", timeouts.len(), &mod_id);
+                    
                     let timeout_work_msg = StateTransferWorkMessage::Timeout(self.view(), timeouts);
 
                     self.state_transfer_handle
                         .send_work_message(timeout_work_msg);
                 } else if Arc::ptr_eq(&mod_id, &LT::mod_name()) {
+                    info!("Delivering {} timeouts to log transfer protocol {}", timeouts.len(), &mod_id);
+                    
                     let lt_work_message = DLWorkMessage::init_log_transfer_message(
                         self.view(),
                         LogTransferWorkMessage::ReceivedTimeout(timeouts),
@@ -1422,10 +1432,7 @@ where
                         SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
                             // Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
                             self.rq_pre_processor
-                                .send_return(PreProcessorMessage::ForwardedRequests(
-                                    StoredMessage::new(header, fwd_reqs),
-                                ))
-                                .unwrap();
+                                .process_forwarded_requests(StoredMessage::new(header, fwd_reqs))?;
                         }
                         SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
                             let message = fwd_protocol.into_inner();

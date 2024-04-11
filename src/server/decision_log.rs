@@ -24,7 +24,6 @@ use atlas_core::ordering_protocol::networking::serialize::{NetworkView, Ordering
 use atlas_core::ordering_protocol::{
     Decision, DecisionMetadata, ExecutionResult, OrderingProtocol, ProtocolMessage,
 };
-use atlas_core::request_pre_processing::{PreProcessorMessage, RequestPreProcessor};
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle};
 use atlas_logging_core::decision_log::{
     DecisionLog, DecisionLogInitializer, LoggedDecision, LoggedDecisionValue,
@@ -37,6 +36,7 @@ use atlas_logging_core::log_transfer::{
 use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_metrics::metrics::{metric_duration, metric_store_count};
 use atlas_smr_core::exec::WrappedExecHandle;
+use atlas_smr_core::request_pre_processing::{RequestPreProcessing, RequestPreProcessor};
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::SMRRawReq;
 
@@ -444,7 +444,7 @@ where
                             Either::Right(_) => {
                                 let (_seq, client_rqs, decision) = decision.into_inner();
 
-                                let _ = self.rq_pre_processor.send_return(PreProcessorMessage::DecidedBatch(client_rqs));
+                                let _ = self.rq_pre_processor.process_decided_batch(client_rqs);
 
                                 match decision {
                                     LoggedDecisionValue::Execute(batch) => {
@@ -493,7 +493,7 @@ where
 
             if let Err(err) = self
                 .rq_pre_processor
-                .send_return(PreProcessorMessage::DecidedBatch(requests))
+                .process_decided_batch(requests)
             {
                 error!("Error sending decided batch to pre processor: {:?}", err);
             }
