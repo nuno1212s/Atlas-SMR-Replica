@@ -69,11 +69,7 @@ use atlas_smr_core::state_transfer::{STResult, StateTransferProtocol};
 use atlas_smr_core::SMRReq;
 
 use crate::config::ReplicaConfig;
-use crate::metric::{
-    ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID,
-    REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID,
-    REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, REPLICA_TAKE_FROM_NETWORK_ID, TIMEOUT_PROCESS_TIME_ID,
-};
+use crate::metric::{OP_MESSAGES_PROCESSED_ID, ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID, REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, REPLICA_TAKE_FROM_NETWORK_ID, TIMEOUT_PROCESS_TIME_ID};
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::decision_log::{
     DLWorkMessage, DecisionLogHandle, DecisionLogManager, DecisionLogWorkMessage,
@@ -330,7 +326,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         let default_timeout = Duration::from_secs(3);
 
         let (exec_tx, exec_rx) =
-            channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL, Some("Processed message channel"));
+            channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL, Some("Timeout Reception channel"));
 
         debug!("{:?} // Initializing timeouts", log_node_id);
 
@@ -801,6 +797,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         let exec_result = self.ordering_protocol.process_message(message)?;
 
         metric_duration(ORDERING_PROTOCOL_PROCESS_TIME_ID, start.elapsed());
+        metric_increment(OP_MESSAGES_PROCESSED_ID, None);
 
         let start = Instant::now();
 

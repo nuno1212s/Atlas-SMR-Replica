@@ -64,6 +64,9 @@ pub(crate) const REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID: usize = 515;
 pub(crate) const UNORDERED_OPS_PER_SECOND: &str = "UNORDERED_OPS_PUSHED";
 pub(crate) const UNORDERED_OPS_PER_SECOND_ID: usize = 516;
 
+pub(crate) const OP_MESSAGES_PROCESSED: &str = "OP_MESSAGES_PROCESSED";
+pub(crate) const OP_MESSAGES_PROCESSED_ID: usize = 517;
+
 pub fn metrics() -> Vec<MetricRegistry> {
     vec![
         (
@@ -175,6 +178,13 @@ pub fn metrics() -> Vec<MetricRegistry> {
             UNORDERED_OPS_PER_SECOND_ID,
             UNORDERED_OPS_PER_SECOND.to_string(),
             MetricKind::Counter,
+        )
+            .into(),
+        (
+            OP_MESSAGES_PROCESSED_ID,
+            OP_MESSAGES_PROCESSED.to_string(),
+            MetricKind::Counter,
+            MetricLevel::Info
         )
             .into(),
     ]
