@@ -38,19 +38,19 @@ mod state_transfer;
 
 /// Replica type made to handle monolithic states and executors
 pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
-    where
-        RP: ReconfigurationProtocol + 'static,
-        S: MonolithicState + 'static,
-        A: Application<S> + Send,
-        OP: LoggableOrderProtocol<SMRReq<A::AppData>>,
-        DL: DecisionLog<SMRReq<A::AppData>, OP>,
-        LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL>,
-        VT: ViewTransferProtocol<OP>,
-        ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol,
-        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
+where
+    RP: ReconfigurationProtocol + 'static,
+    S: MonolithicState + 'static,
+    A: Application<S> + Send,
+    OP: LoggableOrderProtocol<SMRReq<A::AppData>>,
+    DL: DecisionLog<SMRReq<A::AppData>, OP>,
+    LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL>,
+    VT: ViewTransferProtocol<OP>,
+    ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol,
+    PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + MonolithicStateLog<S>
         + 'static,
-        NT: SMRReplicaNetworkNode<
+    NT: SMRReplicaNetworkNode<
             RP::InformationProvider,
             RP::Serialization,
             A::AppData,
@@ -66,20 +66,20 @@ pub struct MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
 }
 
 impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL>
-    where
-        RP: ReconfigurationProtocol + 'static,
-        ME: TMonolithicStateExecutor<A, S, NT::ApplicationNode> + 'static,
-        S: MonolithicState + 'static,
-        A: Application<S> + Send + 'static,
-        OP: LoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
-        DL: DecisionLog<SMRReq<A::AppData>, OP> + 'static,
-        LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL> + 'static,
-        VT: ViewTransferProtocol<OP> + 'static,
-        ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol + Send + 'static,
-        PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
+where
+    RP: ReconfigurationProtocol + 'static,
+    ME: TMonolithicStateExecutor<A, S, NT::ApplicationNode> + 'static,
+    S: MonolithicState + 'static,
+    A: Application<S> + Send + 'static,
+    OP: LoggableOrderProtocol<SMRReq<A::AppData>> + Send + 'static,
+    DL: DecisionLog<SMRReq<A::AppData>, OP> + 'static,
+    LT: LogTransferProtocol<SMRReq<A::AppData>, OP, DL> + 'static,
+    VT: ViewTransferProtocol<OP> + 'static,
+    ST: MonolithicStateTransfer<S> + PersistableStateTransferProtocol + Send + 'static,
+    PL: SMRPersistentLog<A::AppData, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
         + MonolithicStateLog<S>
         + 'static,
-        NT: SMRReplicaNetworkNode<
+    NT: SMRReplicaNetworkNode<
             RP::InformationProvider,
             RP::Serialization,
             A::AppData,
@@ -92,19 +92,23 @@ impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, 
     pub async fn bootstrap(
         cfg: MonolithicStateReplicaConfig<RP, S, A, OP, DL, ST, LT, VT, NT, PL>,
     ) -> Result<Self>
-        where
-            OP: NetworkedOrderProtocolInitializer<SMRReq<A::AppData>, RequestPreProcessor<SMRReq<A::AppData>>, NT::ProtocolNode>,
-            VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
-            LT: LogTransferProtocolInitializer<
-                SMRReq<A::AppData>,
-                OP,
-                DL,
-                PL,
-                Exec<A::AppData>,
-                NT::ProtocolNode,
-            >,
-            DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>>,
-            ST: MonolithicStateTransferInitializer<S, NT::StateTransferNode, PL>,
+    where
+        OP: NetworkedOrderProtocolInitializer<
+            SMRReq<A::AppData>,
+            RequestPreProcessor<SMRReq<A::AppData>>,
+            NT::ProtocolNode,
+        >,
+        VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>,
+        LT: LogTransferProtocolInitializer<
+            SMRReq<A::AppData>,
+            OP,
+            DL,
+            PL,
+            Exec<A::AppData>,
+            NT::ProtocolNode,
+        >,
+        DL: DecisionLogInitializer<SMRReq<A::AppData>, OP, PL, Exec<A::AppData>>,
+        ST: MonolithicStateTransferInitializer<S, NT::StateTransferNode, PL>,
     {
         let MonolithicStateReplicaConfig {
             service,
@@ -123,7 +127,7 @@ impl<RP, ME, S, A, OP, DL, ST, LT, VT, NT, PL> MonReplica<RP, ME, S, A, OP, DL, 
             executor_handle.clone(),
             handle,
         )
-            .await?;
+        .await?;
 
         let node = inner_replica.node.clone();
 

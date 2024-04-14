@@ -187,14 +187,15 @@ pub fn metrics() -> Vec<MetricRegistry> {
             OP_MESSAGES_PROCESSED_ID,
             OP_MESSAGES_PROCESSED.to_string(),
             MetricKind::Counter,
-            MetricLevel::Info
+            MetricLevel::Info,
         )
             .into(),
         (
             DECISION_LOG_PROCESSED_ID,
             DECISION_LOG_PROCESSED.to_string(),
             MetricKind::Counter,
-            MetricLevel::Info
-        ).into(),
+            MetricLevel::Info,
+        )
+            .into(),
     ]
 }
