@@ -67,6 +67,9 @@ pub(crate) const UNORDERED_OPS_PER_SECOND_ID: usize = 516;
 pub(crate) const OP_MESSAGES_PROCESSED: &str = "OP_MESSAGES_PROCESSED";
 pub(crate) const OP_MESSAGES_PROCESSED_ID: usize = 517;
 
+pub(crate) const DECISION_LOG_PROCESSED: &str = "DL_MESSAGES_PROCESSED";
+pub(crate) const DECISION_LOG_PROCESSED_ID: usize = 518;
+
 pub fn metrics() -> Vec<MetricRegistry> {
     vec![
         (
@@ -187,5 +190,11 @@ pub fn metrics() -> Vec<MetricRegistry> {
             MetricLevel::Info
         )
             .into(),
+        (
+            DECISION_LOG_PROCESSED_ID,
+            DECISION_LOG_PROCESSED.to_string(),
+            MetricKind::Counter,
+            MetricLevel::Info
+        ).into(),
     ]
 }
