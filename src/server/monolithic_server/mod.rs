@@ -1,4 +1,6 @@
 use std::marker::PhantomData;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use atlas_common::error::*;
@@ -158,7 +160,7 @@ where
         self.inner_replica.bootstrap_protocols()
     }
 
-    pub fn run(&mut self) -> Result<()> {
+    pub fn run(&mut self, trigger: Option<Arc<AtomicBool>>) -> Result<()> {
         let mut last_loop = Instant::now();
 
         loop {
@@ -166,6 +168,12 @@ where
 
             metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());
 
+            if let Some(trigger) = trigger.as_ref() {
+                if trigger.load(Ordering::Relaxed) {
+                    break Ok(()); // Exit the loop
+                }
+            }
+            
             last_loop = Instant::now();
         }
     }

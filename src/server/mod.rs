@@ -20,9 +20,7 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{channel, Err};
 use atlas_communication::message::StoredMessage;
-use atlas_communication::reconfiguration::{
-    NetworkInformationProvider, ReconfigurationMessageHandler,
-};
+use atlas_communication::reconfiguration::{NetworkInformationProvider, NetworkReconfigurationCommunication, ReconfigurationNetworkCommunication};
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::executor::DecisionExecutorHandle;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
@@ -42,14 +40,12 @@ use atlas_core::ordering_protocol::{
 };
 use atlas_core::persistent_log::OperationMode;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
-use atlas_core::reconfiguration_protocol::{
-    AlterationFailReason, QuorumAlterationResponse, QuorumAttemptJoinResponse,
-    QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeType,
-    ReconfigurationProtocol,
-};
+use atlas_core::reconfiguration_protocol::{AlterationFailReason, NodeConnectionUpdateMessage, QuorumAlterationResponse, QuorumAttemptJoinResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeType, ReconfigurationProtocol};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
-use atlas_core::request_pre_processing::{RequestClientPreProcessing, RequestPreProcessing, RequestPreProcessorTimeout};
-use atlas_core::timeouts::timeout::ModTimeout;
+use atlas_core::request_pre_processing::{
+    RequestClientPreProcessing, RequestPreProcessing, RequestPreProcessorTimeout,
+};
+use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle};
 use atlas_core::timeouts::{initialize_timeouts, Timeout, TimeoutIdentification, TimeoutsHandle};
 use atlas_logging_core::decision_log::{
     DecisionLog, DecisionLogInitializer, LoggedDecision, LoggedDecisionValue,
@@ -192,6 +188,8 @@ pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
     reconf_receive: ChannelSyncRx<QuorumReconfigurationMessage>,
     // reconfiguration protocol send
     reconf_tx: ChannelSyncTx<QuorumReconfigurationResponse>,
+    // The rx side of the channel to receive network updates
+    network_update_listener: ChannelSyncRx<NodeConnectionUpdateMessage>,
     // handle the state transfer handle
     state_transfer_handle: StateTransferThreadHandle<ViewType<D, VT, OP, NT, Self>>,
     // Persistent log
@@ -304,19 +302,25 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             p,
         } = cfg;
 
-        let timeouts = Self::initialize_timeouts(log_node_id);
-
         let network_info = RP::init_default_information(reconfig_node)?;
 
         let log_node_id = network_info.own_node_info().node_id();
+
+        let (timeouts, timeout_rx) = Self::initialize_timeouts(log_node_id);
 
         info!(
             "{:?} // Bootstrapping replica, starting with networking",
             log_node_id
         );
-        let reconfiguration_handler = ReconfigurationMessageHandler::initialize();
 
-        let node = Self::initialize_network_protocol(network_info.clone(), node_config, reconfiguration_handler).await?;
+        let (network_handler, reconfiguration_handler) = atlas_communication::reconfiguration::initialize_network_reconfiguration_comms(100);
+
+        let node = Self::initialize_network_protocol(
+            network_info.clone(),
+            node_config,
+            network_handler,
+        )
+            .await?;
 
         let (reconf_tx, reconf_rx) = channel::new_bounded_sync(
             REPLICA_MESSAGE_CHANNEL,
@@ -328,7 +332,9 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             Some("Reconfiguration Channel Response Message"),
         );
 
-        let replica_node_args = ReconfigurableNodeType::QuorumNode(reconf_tx, reply_rx);
+        let (network_update_tx, network_update_rx) = channel::new_bounded_sync(128, Some("Network update channel"));
+
+        let replica_node_args = (network_update_tx, ReconfigurableNodeType::QuorumNode(reconf_tx, reply_rx)).into();
 
         debug!("{:?} // Initializing reconfiguration protocol", log_node_id);
 
@@ -447,22 +453,25 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             timeouts,
             executor_handle: executor,
             node,
-            timeout_rx: exec_rx,
+            timeout_rx,
             processed_timeout: timeout_channel,
             reconf_receive: reconf_rx,
             reconf_tx: reconf_response_tx,
             state_transfer_handle: state,
             persistent_log,
             reconfig_protocol,
+            network_update_listener: network_update_rx,
             st: Default::default(),
         };
 
         Ok(replica)
     }
 
-    async fn initialize_network_protocol(network_info: RP::InformationProvider,
-                                         node_config: NT::Config,
-                                         reconfiguration_handler: ReconfigurationMessageHandler) -> Result<Arc<NT>> {
+    async fn initialize_network_protocol(
+        network_info: Arc<RP::InformationProvider>,
+        node_config: NT::Config,
+        reconfiguration_handler: NetworkReconfigurationCommunication,
+    ) -> Result<Arc<NT>> {
         let node = NT::bootstrap(
             network_info.clone(),
             node_config,
@@ -470,14 +479,19 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         )
             .await?;
 
-        Arc::new(node)
+        Ok(Arc::new(node))
     }
 
-    async fn initialize_reconfiguration_protocol(reconfiguration_handle: ReconfigurationMessageHandler)
-                                                 -> (OneShotRx<Result<RP>>,
-                                                     ChannelSyncRx<QuorumReconfigurationMessage>,
-                                                     ChannelSyncTx<QuorumReconfigurationResponse>
-                                                 ) {
+    /*async fn initialize_reconfiguration_protocol(
+        network_info: Arc<RP::InformationProvider>,
+        reconfiguration_handler: ReconfigurationNetworkCommunication,
+        timeout_handle: &TimeoutsHandle,
+        node: &NT,
+    ) -> Result<(
+        OneShotRx<Result<RP>>,
+        ChannelSyncRx<QuorumReconfigurationMessage>,
+        ChannelSyncTx<QuorumReconfigurationResponse>,
+    )> {
         let (reconf_return_tx, reconf_return) = channel::new_oneshot_channel();
 
         let (reconf_tx, reconf_rx) = channel::new_bounded_sync(
@@ -490,22 +504,25 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             Some("Reconfiguration Channel Response Message"),
         );
 
-        let replica_node_args = ReconfigurableNodeType::QuorumNode(reconf_tx, reply_rx);
+        let (network_tx, network_rx) = channel::new_bounded_sync(128, Some("Network update channel"));
 
-        debug!("{:?} // Initializing reconfiguration protocol", log_node_id);
+        let replica_node_args = (network_tx, ReconfigurableNodeType::QuorumNode(reconf_tx, reply_rx)).into();
+
+        debug!("{:?} // Initializing reconfiguration protocol", network_info.own_node_info().node_id());
 
         let reconfig_protocol = RP::initialize_protocol(
             network_info,
             node.reconfiguration_node().clone(),
-            timeouts.gen_mod_handle_with_name(RP::mod_name()),
+            timeout_handle.gen_mod_handle_with_name(RP::mod_name()),
             replica_node_args,
             reconfiguration_handler,
             OP::get_n_for_f(1),
-        ).await?;
+        )
+            .await?;
 
         info!(
             "{:?} // Waiting for reconfiguration protocol to stabilize",
-            log_node_id
+            network_info.own_node_info().node_id()
         );
 
         atlas_common::async_runtime::spawn_blocking(async move {
@@ -537,9 +554,9 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         });
 
         Ok((reconf_return, reconf_rx, reconf_response_tx))
-    }
+    }*/
 
-    fn initialize_timeouts(node_id: NodeId) -> TimeoutsHandle {
+    fn initialize_timeouts(node_id: NodeId) -> (TimeoutsHandle, ChannelSyncRx<Vec<Timeout>>) {
         debug!("Initializing timeouts");
 
         let default_timeout = Duration::from_secs(3);
@@ -547,7 +564,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         let (exec_tx, exec_rx) =
             channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL, Some("Timeout Reception channel"));
 
-        initialize_timeouts(node_id.clone(), 2, 128, TimeoutHandler::from(exec_tx))
+        (initialize_timeouts(node_id.clone(), 2, 128, TimeoutHandler::from(exec_tx)), exec_rx)
     }
 
     fn id(&self) -> NodeId {
@@ -998,12 +1015,40 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         Ok(())
     }
 
-    fn receive_internal(&mut self) -> Result<()> {
+    fn receive_from_timeouts(&mut self) -> Result<()> {
         // FIXME: Do this with a select?
         while let Ok(timeout) = self.timeout_rx.try_recv() {
             self.timeout_received(timeout)?;
         }
 
+        Ok(())
+    }
+
+    fn receive_from_processed_timeouts(&mut self) -> Result<()> {
+        while let Ok((timeouts, deleted)) = self.processed_timeout.1.try_recv() {
+            self.processed_timeout_recvd(timeouts, deleted)?;
+        }
+
+        Ok(())
+    }
+
+    fn receive_from_network_updates(&mut self) -> Result<()> {
+        while let Ok(network_update) = self.network_update_listener.try_recv() {
+            match network_update {
+                NodeConnectionUpdateMessage::NodeConnected(node_id) => {
+                    info!("Node connected: {:?}", node_id);
+                    self.rq_pre_processor.reset_client(node_id.node_id());
+                }
+                NodeConnectionUpdateMessage::NodeDisconnected(node_id) => {
+                    info!("Node disconnected: {:?}", node_id);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn receive_from_reconfiguration_protocol(&mut self) -> Result<()> {
         while let Ok(received) = self.reconf_receive.try_recv() {
             match received {
                 QuorumReconfigurationMessage::RequestQuorumJoin(node) => {
@@ -1040,19 +1085,26 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                 QuorumReconfigurationMessage::ReconfigurationProtocolStable(_) => {
                     info!("Received reconfiguration protocol stable but we are already done?");
                 }
-                QuorumReconfigurationMessage::ConnectedNode(node_info) => {
-                    if matches!(node_info.node_type(), NodeType::Client) {
-                        info!("Received connected node message for client, resetting client");
-
-                        self.rq_pre_processor.reset_client(node_info);
-                    }
-                }
             }
         }
 
-        while let Ok((timeouts, deleted)) = self.processed_timeout.1.try_recv() {
-            self.processed_timeout_recvd(timeouts, deleted)?;
-        }
+        Ok(())
+    }
+
+    /// Receive from all internal channels, that equate to other protocols which are running
+    /// in parallel.
+    /// All functions called by this should be NON-BLOCKING (and should use try_recv) as this WILL
+    /// tank the performance of the orchestrator.
+    fn receive_internal(&mut self) -> Result<()> {
+
+        // FIXME: Do this with a select?
+        self.receive_from_network_updates()?;
+
+        self.receive_from_timeouts()?;
+
+        self.receive_from_processed_timeouts()?;
+
+        self.receive_from_reconfiguration_protocol()?;
 
         Ok(())
     }
