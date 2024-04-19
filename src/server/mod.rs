@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -40,7 +41,7 @@ use atlas_core::ordering_protocol::{
 };
 use atlas_core::persistent_log::OperationMode;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
-use atlas_core::reconfiguration_protocol::{AlterationFailReason, NodeConnectionUpdateMessage, QuorumAlterationResponse, QuorumAttemptJoinResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeType, ReconfigurationProtocol};
+use atlas_core::reconfiguration_protocol::{AlterationFailReason, NodeConnectionUpdateMessage, QuorumAlterationResponse, QuorumAttemptJoinResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse, ReconfigurableNodeType, ReconfigurationCommunicationHandles, ReconfigurationProtocol};
 use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::request_pre_processing::{
     RequestClientPreProcessing, RequestPreProcessing, RequestPreProcessorTimeout,
@@ -53,18 +54,16 @@ use atlas_logging_core::decision_log::{
 use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::{metric_duration, metric_increment};
-use atlas_persistent_log::NoPersistentLog;
+use atlas_persistent_log::{NoPersistentLog, PersistentLogModeTrait};
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::message::{StateTransfer, SystemMessage};
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
-use atlas_smr_core::request_pre_processing::{
-    initialize_request_pre_processor, RequestPreProcessor,
-};
+use atlas_smr_core::request_pre_processing::{initialize_request_pre_processor, OrderedRqHandles, RequestPreProcessor, UnorderedRqHandles};
 use atlas_smr_core::serialize::SMRSysMsg;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::{STResult, StateTransferProtocol};
-use atlas_smr_core::SMRReq;
+use atlas_smr_core::{SMRRawReq, SMRReq};
 
 use crate::config::ReplicaConfig;
 use crate::metric::{
@@ -338,13 +337,12 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         debug!("{:?} // Initializing reconfiguration protocol", log_node_id);
 
-        let reconfig_protocol = RP::initialize_protocol(
-            network_info,
-            node.reconfiguration_node().clone(),
-            timeouts.gen_mod_handle_with_name(RP::mod_name()),
+        let reconfig_protocol = Self::initialize_reconfiguration_protocol(
+            network_info.clone(),
+            &node,
+            timeouts.clone(),
             replica_node_args,
             reconfiguration_handler,
-            OP::get_n_for_f(1),
         )
             .await?;
 
@@ -353,22 +351,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             log_node_id
         );
 
-        let mut quorum = {
-            let message = reconf_rx.recv().unwrap();
-
-            match message {
-                QuorumReconfigurationMessage::ReconfigurationProtocolStable(quorum) => {
-                    reconf_response_tx
-                        .send_return(QuorumReconfigurationResponse::QuorumStableResponse(true))
-                        .unwrap();
-
-                    quorum
-                }
-                _ => {
-                    return Err!(SMRReplicaError::AlterationReceivedBeforeStable);
-                }
-            }
-        };
+        let mut quorum = Self::acquire_quorum_info(&reconf_rx, reconf_response_tx.clone())?;
 
         if quorum.len() < OP::get_n_for_f(1) {
             return Err!(SMRReplicaError::QuorumNotLargeEnough(
@@ -384,61 +367,46 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             quorum
         );
 
-        let (ordered, unordered) = initialize_request_pre_processor::<
-            WDRoundRobin,
-            D,
-            NT::ApplicationNode,
-        >(4, node.app_node());
+        let (ordered, unordered) = Self::initialize_rq_pre_processor(4, &node);
 
-        unordered_rq_handler::start_unordered_rq_thread::<D>(unordered, executor.clone());
+        Self::initialize_unordered_rq_bridge(unordered, executor.clone())?;
 
-        let persistent_log =
-            PL::init_log::<String, NoPersistentLog, OP, ST, DL>(executor.clone(), db_path)?;
-
-        let (rq_pre_processor, batch_input) = ordered.into();
-
-        let op_args = OrderingProtocolArgs(
-            log_node_id,
-            timeouts.gen_mod_handle_with_name(OP::mod_name()),
-            rq_pre_processor.clone(),
-            batch_input,
-            node.protocol_node().clone(),
-            quorum.clone(),
-        );
+        let persistent_log = Self::initialize_persistent_log::<NoPersistentLog, _>(executor.clone(), db_path)?;
 
         let log = persistent_log.read_decision_log(OperationMode::BlockingSync)?;
 
-        let decision_handle = DecisionLogManager::<
-            ViewType<D, VT, OP, NT, Self>,
-            D::Request,
-            OP,
-            DL,
-            LT,
-            NT::ProtocolNode,
-            PL,
-        >::initialize_decision_log_mngt(
+        let ordering_protocol = Self::initialize_order_protocol(
+            op_config,
+            log_node_id.clone(),
+            timeouts.clone(),
+            ordered.clone(),
+            quorum.clone(),
+            &node,
+        )?;
+
+        let view_transfer_protocol = Self::initialize_view_transfer_protocol(
+            vt_config,
+            &node,
+            quorum.clone(),
+            timeouts.clone(),
+        )?;
+
+        let decision_handle = Self::initialize_decision_log(
             dl_config,
             lt_config,
             persistent_log.clone(),
-            timeouts.gen_mod_handle_with_name(LT::mod_name()),
-            node.protocol_node().clone(),
-            rq_pre_processor.clone(),
+            timeouts.clone(),
+            &node,
+            ordered.clone(),
             state.clone(),
             executor.clone(),
-        )?;
-
-        let ordering_protocol = OP::initialize(op_config, op_args)?;
-
-        let view_transfer_protocol = VT::initialize_view_transfer_protocol(
-            vt_config,
-            node.protocol_node().clone(),
-            quorum.clone(),
-            timeouts.gen_mod_handle_with_name(VT::mod_name()),
         )?;
 
         info!("{:?} // Finished bootstrapping node.", log_node_id);
 
         let timeout_channel = channel::new_bounded_sync(1024, Some("SMR Timeout work channel"));
+
+        let (rq_pre_processor, _) = ordered.into();
 
         let mut replica = Self {
             execution_state: ExecutionPhase::ViewTransferProtocol,
@@ -482,79 +450,54 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         Ok(Arc::new(node))
     }
 
-    /*async fn initialize_reconfiguration_protocol(
+    async fn initialize_reconfiguration_protocol(
         network_info: Arc<RP::InformationProvider>,
-        reconfiguration_handler: ReconfigurationNetworkCommunication,
-        timeout_handle: &TimeoutsHandle,
         node: &NT,
-    ) -> Result<(
-        OneShotRx<Result<RP>>,
-        ChannelSyncRx<QuorumReconfigurationMessage>,
-        ChannelSyncTx<QuorumReconfigurationResponse>,
-    )> {
-        let (reconf_return_tx, reconf_return) = channel::new_oneshot_channel();
-
-        let (reconf_tx, reconf_rx) = channel::new_bounded_sync(
-            REPLICA_MESSAGE_CHANNEL,
-            Some("Reconfiguration Channel message"),
-        );
-
-        let (reconf_response_tx, reply_rx) = channel::new_bounded_sync(
-            REPLICA_MESSAGE_CHANNEL,
-            Some("Reconfiguration Channel Response Message"),
-        );
-
-        let (network_tx, network_rx) = channel::new_bounded_sync(128, Some("Network update channel"));
-
-        let replica_node_args = (network_tx, ReconfigurableNodeType::QuorumNode(reconf_tx, reply_rx)).into();
-
-        debug!("{:?} // Initializing reconfiguration protocol", network_info.own_node_info().node_id());
-
+        timeouts: TimeoutsHandle,
+        replica_node_args: ReconfigurationCommunicationHandles,
+        reconfiguration_handler: ReconfigurationNetworkCommunication,
+    )
+        -> Result<RP> {
         let reconfig_protocol = RP::initialize_protocol(
             network_info,
             node.reconfiguration_node().clone(),
-            timeout_handle.gen_mod_handle_with_name(RP::mod_name()),
+            timeouts.gen_mod_handle_with_name(RP::mod_name()),
             replica_node_args,
             reconfiguration_handler,
             OP::get_n_for_f(1),
         )
             .await?;
 
-        info!(
-            "{:?} // Waiting for reconfiguration protocol to stabilize",
-            network_info.own_node_info().node_id()
-        );
+        Ok(reconfig_protocol)
+    }
 
-        atlas_common::async_runtime::spawn_blocking(async move {
-            let mut quorum = {
-                let message = reconf_rx.recv().unwrap();
+    fn acquire_quorum_info(reconf_rx: &ChannelSyncRx<QuorumReconfigurationMessage>,
+                           reconf_response_tx: ChannelSyncTx<QuorumReconfigurationResponse>)
+                           -> Result<Vec<NodeId>> {
+        let message = reconf_rx.recv().unwrap();
 
-                match message {
-                    QuorumReconfigurationMessage::ReconfigurationProtocolStable(quorum) => {
-                        reconf_response_tx
-                            .send_return(QuorumReconfigurationResponse::QuorumStableResponse(true))
-                            .unwrap();
+        let quorum = match message {
+            QuorumReconfigurationMessage::ReconfigurationProtocolStable(quorum) => {
+                reconf_response_tx
+                    .send_return(QuorumReconfigurationResponse::QuorumStableResponse(true))?;
 
-                        quorum
-                    }
-                    _ => {
-                        return Err!(SMRReplicaError::AlterationReceivedBeforeStable);
-                    }
-                }
-            };
-
-            if quorum.len() < OP::get_n_for_f(1) {
-                return Err!(SMRReplicaError::QuorumNotLargeEnough(
-                    quorum.len(),
-                    OP::get_n_for_f(1)
-                ));
+                quorum
             }
+            _ => {
+                return Err!(SMRReplicaError::AlterationReceivedBeforeStable);
+            }
+        };
 
-            reconf_return_tx.send(Ok(reconfig_protocol));
-        });
+        Ok(quorum)
+    }
 
-        Ok((reconf_return, reconf_rx, reconf_response_tx))
-    }*/
+    fn initialize_rq_pre_processor(concurrency: usize, node: &NT) -> (OrderedRqHandles<SMRReq<D>>, UnorderedRqHandles<SMRReq<D>>) {
+        initialize_request_pre_processor::<
+            WDRoundRobin,
+            D,
+            NT::ApplicationNode,
+        >(4, node.app_node())
+    }
 
     fn initialize_timeouts(node_id: NodeId) -> (TimeoutsHandle, ChannelSyncRx<Vec<Timeout>>) {
         debug!("Initializing timeouts");
@@ -565,6 +508,111 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL, Some("Timeout Reception channel"));
 
         (initialize_timeouts(node_id.clone(), 2, 128, TimeoutHandler::from(exec_tx)), exec_rx)
+    }
+
+    fn initialize_order_protocol(
+        op_config: OP::Config,
+        node_id: NodeId,
+        timeouts: TimeoutsHandle,
+        pre_processor: OrderedRqHandles<SMRReq<D>>,
+        quorum: Vec<NodeId>,
+        node: &NT) -> Result<OP>
+        where
+            OP: NetworkedOrderProtocolInitializer<
+                SMRReq<D>,
+                RequestPreProcessor<SMRReq<D>>,
+                NT::ProtocolNode,
+            >
+    {
+        let (rq_pre_processor, batch_input) = pre_processor.into();
+
+        let op_args = OrderingProtocolArgs(
+            node_id,
+            timeouts.gen_mod_handle_with_name(OP::mod_name()),
+            rq_pre_processor.clone(),
+            batch_input,
+            node.protocol_node().clone(),
+            quorum,
+        );
+
+        OP::initialize(op_config, op_args)
+    }
+
+    fn initialize_view_transfer_protocol(config: VT::Config,
+                                         node: &NT,
+                                         quorum: Vec<NodeId>,
+                                         timeouts: TimeoutsHandle) -> Result<VT>
+        where
+            VT: ViewTransferProtocolInitializer<OP, NT::ProtocolNode>
+    {
+        VT::initialize_view_transfer_protocol(config, node.protocol_node().clone(), quorum, timeouts.gen_mod_handle_with_name(VT::mod_name()))
+    }
+
+    fn initialize_decision_log(
+        dl_config: DL::Config,
+        lt_config: LT::Config,
+        persistent_log: PL,
+        timeouts: TimeoutsHandle,
+        node: &NT,
+        ordered_rq_handles: OrderedRqHandles<SMRReq<D>>,
+        state_thread_handle: StateTransferThreadHandle<
+            <Self as PermissionedProtocolHandling<D, VT, OP, NT>>::View,
+        >,
+        executor: Exec<D>,
+    ) -> Result<
+        DecisionLogHandle<
+            ViewType<D, VT, OP, NT, Self>,
+            SMRReq<D>,
+            OP::Serialization,
+            OP::PersistableTypes,
+            LT::Serialization, >
+    >
+        where
+            LT: LogTransferProtocolInitializer<SMRReq<D>, OP, DL, PL, Exec<D>, NT::ProtocolNode>,
+            DL: DecisionLogInitializer<SMRReq<D>, OP, PL, Exec<D>>,
+    {
+        let (rq, _) = ordered_rq_handles.into();
+
+        DecisionLogManager::
+        <ViewType<D, VT, OP, NT, Self>,
+            D::Request,
+            OP,
+            DL,
+            LT,
+            NT::ProtocolNode,
+            PL, >
+        ::initialize_decision_log_mngt(
+            dl_config,
+            lt_config,
+            persistent_log,
+            timeouts.gen_mod_handle_with_name(LT::mod_name()),
+            node.protocol_node().clone(),
+            rq,
+            state_thread_handle,
+            executor,
+        )
+    }
+
+    fn initialize_unordered_rq_bridge(
+        rq_handle: UnorderedRqHandles<SMRReq<D>>,
+        executor: Exec<D>,
+    ) -> Result<()> {
+        unordered_rq_handler::start_unordered_rq_thread::<D>(rq_handle, executor.clone());
+
+        Ok(())
+    }
+
+    fn initialize_persistent_log<LM, K>(
+        executor: Exec<D>,
+        db_path: K,
+    ) -> Result<PL>
+        where
+            LM: PersistentLogModeTrait,
+            K: AsRef<Path>,
+            DL: 'static,
+            ST: 'static,
+            OP: 'static {
+        PL::init_log::<K, LM, OP, ST, DL>(executor.clone(), db_path.into())
     }
 
     fn id(&self) -> NodeId {
