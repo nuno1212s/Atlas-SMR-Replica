@@ -371,10 +371,16 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
 
         Self::initialize_unordered_rq_bridge(unordered, executor.clone())?;
 
+        debug!("Initializing persistent log.");
+        
         let persistent_log = Self::initialize_persistent_log::<NoPersistentLog, _>(executor.clone(), db_path)?;
 
+        debug!("Reading decision log from persistent log");
+        
         let log = persistent_log.read_decision_log(OperationMode::BlockingSync)?;
-
+        
+        debug!("Initializing ordering protocol.");
+        
         let ordering_protocol = Self::initialize_order_protocol(
             op_config,
             log_node_id.clone(),
@@ -383,6 +389,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             quorum.clone(),
             &node,
         )?;
+        
+        debug!("Initializing view transfer protocol.");
 
         let view_transfer_protocol = Self::initialize_view_transfer_protocol(
             vt_config,
@@ -391,6 +399,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             timeouts.clone(),
         )?;
 
+        debug!("Initializing decision log protocol.");
+        
         let decision_handle = Self::initialize_decision_log(
             dl_config,
             lt_config,
@@ -510,6 +520,7 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
         (initialize_timeouts(node_id.clone(), 2, 128, TimeoutHandler::from(exec_tx)), exec_rx)
     }
 
+    #[instrument(skip(op_config, timeouts, pre_processor, node))]
     fn initialize_order_protocol(
         op_config: OP::Config,
         node_id: NodeId,
@@ -524,8 +535,12 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
                 NT::ProtocolNode,
             >
     {
+        info!("Initializing the request pre processor handles");
+        
         let (rq_pre_processor, batch_input) = pre_processor.into();
 
+        info!("Initializing arguments");
+        
         let op_args = OrderingProtocolArgs(
             node_id,
             timeouts.gen_mod_handle_with_name(OP::mod_name()),
@@ -535,6 +550,8 @@ impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT,
             quorum,
         );
 
+        info!("Initializing the abstract protocol.");
+        
         OP::initialize(op_config, op_args)
     }
 
