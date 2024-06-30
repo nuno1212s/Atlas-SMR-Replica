@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use either::Either;
+use getset::Getters;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::metric::{
@@ -53,7 +54,7 @@ const CHANNEL_SIZE: usize = 128;
 /// This is used by the replica to communicate updates to the decision log worker
 /// We rely on the fact that these queues are ordered and that both threads run sequentially,
 /// So the communication between them should match up as if they were all running on the same thread
-#[derive(Clone)]
+#[derive(Clone, Getters)]
 pub struct DecisionLogHandle<V, RQ, OPM, POT, LTM>
 where
     V: NetworkView,
@@ -63,6 +64,7 @@ where
     LTM: LogTransferMessage<RQ, OPM>,
 {
     work_tx: ChannelSyncTx<DLWorkMessage<V, RQ, OPM, POT, LTM>>,
+    #[getset(get = "pub")]
     status_rx: ChannelSyncRx<ReplicaWorkResponses>,
 }
 

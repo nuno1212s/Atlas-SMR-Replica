@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
+use std::path::Iter;
 use std::sync::Arc;
-
-use either::Either;
 
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotTx};
@@ -14,9 +13,11 @@ use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_smr_core::serialize::StateSys;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
-use atlas_smr_core::state_transfer::{STPollResult, STResult, StateTransferProtocol};
-
-use crate::server::REPLICA_WAIT_TIME;
+use atlas_smr_core::state_transfer::{STPollResult, STResult, StateTransferProtocol, CstM};
+use either::Either;
+use getset::Getters;
+use atlas_communication::message::StoredMessage;
+use crate::server::{IterableProtocolRes, REPLICA_WAIT_TIME};
 
 pub const WORK_CHANNEL_SIZE: usize = 128;
 pub const RESPONSE_CHANNEL_SIZE: usize = 128;
@@ -39,30 +40,36 @@ pub enum StateTransferProgress {
 }
 
 /// The handle to the state transfer thread.
+#[derive(Getters)]
 pub struct StateTransferThreadHandle<V>
 where
     V: NetworkView,
 {
     work_tx: ChannelSyncTx<StateTransferWorkMessage<V>>,
+    #[get = "pub"]
     response_rx: ChannelSyncRx<StateTransferProgress>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Getters)]
 pub struct StateTransferThreadInnerHandle<V>
 where
     V: NetworkView,
 {
+    #[get = "pub"]
     work_rx: ChannelSyncRx<StateTransferWorkMessage<V>>,
+    #[get = "pub"]
     response_tx: ChannelSyncTx<StateTransferProgress>,
 }
 
 /// The state transfer management struct, contains the base work handles to deliver work to the
 /// state transfer module
+#[derive(Getters)]
 pub struct StateTransferMngr<V, S, NT, PL, ST>
 where
     ST: StateTransferProtocol<S>,
     V: NetworkView,
 {
+    #[get = "pub"]
     handle: StateTransferThreadInnerHandle<V>,
     currently_running: bool,
     node: Arc<NT>,
@@ -139,53 +146,54 @@ where
         }
     }
 
-    pub fn iterate(&mut self, state_transfer: &mut ST) -> Result<()> {
-        while let Ok(work) = self.handle.work_rx.try_recv() {
-            match work {
-                StateTransferWorkMessage::ShouldRequestAppState(seq, response) => {
-                    Self::should_request_app_state(seq, state_transfer, response)
-                }
-                StateTransferWorkMessage::RequestLatestState(view) => {
-                    self.currently_running = true;
-                    self.handle_view(&view);
+    pub(crate) fn handle_work_message(&mut self, state_transfer: &mut ST, worker_message: StateTransferWorkMessage<V>) -> Result<()> {
+        match worker_message {
+            StateTransferWorkMessage::ShouldRequestAppState(seq, response) => {
+                Self::should_request_app_state(seq, state_transfer, response);
+            }
+            StateTransferWorkMessage::RequestLatestState(view) => {
+                self.currently_running = true;
+                self.handle_view(&view);
 
-                    Self::request_latest_state(view, state_transfer);
-                }
-                StateTransferWorkMessage::ViewState(view) => {
-                    self.handle_view(&view);
-                }
-                StateTransferWorkMessage::Timeout(view, timeout) => {
-                    self.handle_view(&view);
-                }
+                Self::request_latest_state(view, state_transfer);
+            }
+            StateTransferWorkMessage::ViewState(view) => {
+                self.handle_view(&view);
+            }
+            StateTransferWorkMessage::Timeout(view, timeout) => {
+                self.handle_view(&view);
             }
         }
 
-        while let Some(message) = self
-            .node
-            .incoming_stub()
-            .try_receive_messages(Some(REPLICA_WAIT_TIME))?
-        {
-            let view = self.latest_view.clone();
+        Ok(())
+    }
 
-            if self.currently_running {
-                let result = state_transfer.process_message(view, message);
-
-                if let Ok(st_result) = result {
-                    let _ = self
-                        .handle
-                        .response_tx
-                        .send_return(StateTransferProgress::StateTransferProgress(st_result));
-                }
-            } else {
-                let _ = state_transfer.handle_off_ctx_message(view, message);
-            }
-        }
+    pub(crate) fn handle_network_message(&mut self, state_transfer: &mut ST, message: StoredMessage<CstM<ST::Serialization>>) -> Result<()> {
+        let view = self.latest_view.clone();
 
         if self.currently_running {
+            let result = state_transfer.process_message(view, message);
+
+            if let Ok(st_result) = result {
+                let _ = self
+                    .handle
+                    .response_tx
+                    .send_return(StateTransferProgress::StateTransferProgress(st_result));
+            }
+        } else {
+            let _ = state_transfer.handle_off_ctx_message(view, message);
+        }
+        Ok(())
+    }
+
+    pub fn iterate(&mut self, state_transfer: &mut ST) -> Result<IterableProtocolRes> {
+        if self.currently_running {
             match state_transfer.poll()? {
-                STPollResult::ReceiveMsg => {}
+                STPollResult::ReceiveMsg => {
+                     Ok(IterableProtocolRes::Receive)
+                }
                 STPollResult::RePoll => {
-                    return Ok(());
+                     Ok(IterableProtocolRes::ReRun)
                 }
                 STPollResult::Exec(message) => {
                     let res = state_transfer.process_message(self.latest_view.clone(), message)?;
@@ -194,17 +202,21 @@ where
                         .handle
                         .response_tx
                         .send_return(StateTransferProgress::StateTransferProgress(res));
+                    
+                    Ok(IterableProtocolRes::Continue)
                 }
                 STPollResult::STResult(res) => {
                     let _ = self
                         .handle
                         .response_tx
                         .send_return(StateTransferProgress::StateTransferProgress(res));
+                    
+                    Ok(IterableProtocolRes::Continue)
                 }
-            };
+            }
+        } else {
+            Ok(IterableProtocolRes::Continue)
         }
-
-        Ok(())
     }
 
     fn request_latest_state(view: V, state_transfer: &mut ST) {

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 use atlas_common::error::*;
@@ -164,7 +164,7 @@ where
         let mut last_loop = Instant::now();
 
         loop {
-            self.inner_replica.run()?;
+            self.inner_replica.iterate()?;
 
             metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());
 
@@ -173,7 +173,7 @@ where
                     break Ok(()); // Exit the loop
                 }
             }
-            
+
             last_loop = Instant::now();
         }
     }

@@ -160,7 +160,7 @@ where
         let mut last_loop = Instant::now();
 
         loop {
-            self.inner_replica.run()?;
+            self.inner_replica.iterate()?;
 
             metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());
 

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tracing::error;
 
@@ -7,7 +7,7 @@ use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{channel, threadpool};
+use atlas_common::{channel, threadpool, unwrap_channel};
 use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::timeouts::timeout::TimeoutModHandle;
@@ -24,6 +24,7 @@ use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
 use atlas_smr_core::state_transfer::Checkpoint;
 
 use crate::metric::{APP_STATE_DIGEST_TIME_ID, STATE_TRANSFER_PROCESS_TIME_ID};
+use crate::server::IterableProtocolRes;
 use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};
 
 pub struct MonStateTransfer<V, S, NT, PL, ST>
@@ -67,8 +68,8 @@ where
     ) where
         ST: MonolithicStateTransferInitializer<S, NT, PL>,
         NT: StateTransferSendNode<ST::Serialization>
-            + RegularNetworkStub<StateSys<ST::Serialization>>
-            + 'static,
+        + RegularNetworkStub<StateSys<ST::Serialization>>
+        + 'static,
     {
         std::thread::Builder::new()
             .name(String::from("State transfer thread"))
@@ -105,14 +106,17 @@ where
         let mut last_loop = Instant::now();
 
         loop {
-            self.receive_checkpoints()?;
+            match self.inner_state
+                .iterate(&mut self.state_transfer_protocol)? {
+                IterableProtocolRes::ReRun => {
+                    metric_duration(STATE_TRANSFER_PROCESS_TIME_ID, last_loop.elapsed());
+                }
+                IterableProtocolRes::Receive | IterableProtocolRes::Continue => {
+                    metric_duration(STATE_TRANSFER_PROCESS_TIME_ID, last_loop.elapsed());
 
-            self.receive_digested_checkpoints()?;
-
-            self.inner_state
-                .iterate(&mut self.state_transfer_protocol)?;
-
-            metric_duration(STATE_TRANSFER_PROCESS_TIME_ID, last_loop.elapsed());
+                    self.receive_from_all_channels()?;
+                }
+            };
 
             last_loop = Instant::now();
         }
@@ -120,23 +124,28 @@ where
         Ok(())
     }
 
-    fn receive_checkpoints(&mut self) -> Result<()> {
-        while let Ok(checkpoint) = self.checkpoint_rx_from_app.try_recv() {
-            self.execution_finished_with_appstate(checkpoint.seq(), checkpoint.into_state())?;
-        }
+    fn receive_from_all_channels(&mut self) -> Result<()> {
+        let inner_handle = self.inner_state.handle();
 
-        Ok(())
+        channel::sync_select_biased! {
+            recv(unwrap_channel!(inner_handle.work_rx())) -> work_msg => self.inner_state.handle_work_message(&mut self.state_transfer_protocol,work_msg?),
+            recv(unwrap_channel!(self.checkpoint_rx_from_app)) -> checkpoint_from_app => self.handle_checkpoint_received(checkpoint_from_app?),
+            recv(unwrap_channel!(self.digested_state.1)) -> digested => self.handle_received_digested_checkpoint(digested?),
+            recv(unwrap_channel!(self.inner_state.node().incoming_stub().as_ref())) -> network_msg =>
+            self.inner_state.handle_network_message(&mut self.state_transfer_protocol, network_msg?),
+            default(Duration::from_millis(5)) => Ok(()),
+        }
     }
 
-    /// receive digested checkpoints from the threadpoll and pass them to the state transfer protocol
-    fn receive_digested_checkpoints(&mut self) -> Result<()> {
-        while let Ok(checkpoint) = self.digested_state.1.try_recv() {
-            self.state_transfer_protocol
-                .handle_state_received_from_app(checkpoint.clone())?;
-            self.inner_state
-                .notify_of_checkpoint(checkpoint.sequence_number());
-        }
+    fn handle_checkpoint_received(&mut self, checkpoint: AppStateMessage<S>) -> Result<()> {
+        self.execution_finished_with_appstate(checkpoint.seq(), checkpoint.into_state())
+    }
 
+    fn handle_received_digested_checkpoint(&mut self, checkpoint: Arc<ReadOnly<Checkpoint<S>>>) -> Result<()> {
+        self.state_transfer_protocol
+            .handle_state_received_from_app(checkpoint.clone())?;
+        self.inner_state
+            .notify_of_checkpoint(checkpoint.sequence_number());
         Ok(())
     }
 
