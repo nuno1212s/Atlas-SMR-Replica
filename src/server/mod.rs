@@ -661,6 +661,8 @@ where
     }
 
     pub fn iterate(&mut self) -> Result<()> {
+        trace!("Iterating protocols with current execution state {:?}", self.execution_state);
+        
         let protocol_result = match self.execution_state {
             ExecutionPhase::OrderProtocol => {
                 self.run_order_protocol()?
