@@ -2,10 +2,12 @@ use std::marker::PhantomData;
 use std::path::Iter;
 use std::sync::Arc;
 
+use crate::server::{IterableProtocolRes, REPLICA_WAIT_TIME};
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotTx};
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
+use atlas_communication::message::StoredMessage;
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::ExecutionResult;
@@ -13,11 +15,9 @@ use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_smr_core::serialize::StateSys;
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
-use atlas_smr_core::state_transfer::{STPollResult, STResult, StateTransferProtocol, CstM};
+use atlas_smr_core::state_transfer::{CstM, STPollResult, STResult, StateTransferProtocol};
 use either::Either;
 use getset::Getters;
-use atlas_communication::message::StoredMessage;
-use crate::server::{IterableProtocolRes, REPLICA_WAIT_TIME};
 
 pub const WORK_CHANNEL_SIZE: usize = 128;
 pub const RESPONSE_CHANNEL_SIZE: usize = 128;
@@ -146,7 +146,11 @@ where
         }
     }
 
-    pub(crate) fn handle_work_message(&mut self, state_transfer: &mut ST, worker_message: StateTransferWorkMessage<V>) -> Result<()> {
+    pub(crate) fn handle_work_message(
+        &mut self,
+        state_transfer: &mut ST,
+        worker_message: StateTransferWorkMessage<V>,
+    ) -> Result<()> {
         match worker_message {
             StateTransferWorkMessage::ShouldRequestAppState(seq, response) => {
                 Self::should_request_app_state(seq, state_transfer, response);
@@ -168,7 +172,11 @@ where
         Ok(())
     }
 
-    pub(crate) fn handle_network_message(&mut self, state_transfer: &mut ST, message: StoredMessage<CstM<ST::Serialization>>) -> Result<()> {
+    pub(crate) fn handle_network_message(
+        &mut self,
+        state_transfer: &mut ST,
+        message: StoredMessage<CstM<ST::Serialization>>,
+    ) -> Result<()> {
         let view = self.latest_view.clone();
 
         if self.currently_running {
@@ -189,12 +197,8 @@ where
     pub fn iterate(&mut self, state_transfer: &mut ST) -> Result<IterableProtocolRes> {
         if self.currently_running {
             match state_transfer.poll()? {
-                STPollResult::ReceiveMsg => {
-                     Ok(IterableProtocolRes::Receive)
-                }
-                STPollResult::RePoll => {
-                     Ok(IterableProtocolRes::ReRun)
-                }
+                STPollResult::ReceiveMsg => Ok(IterableProtocolRes::Receive),
+                STPollResult::RePoll => Ok(IterableProtocolRes::ReRun),
                 STPollResult::Exec(message) => {
                     let res = state_transfer.process_message(self.latest_view.clone(), message)?;
 
@@ -202,7 +206,7 @@ where
                         .handle
                         .response_tx
                         .send_return(StateTransferProgress::StateTransferProgress(res));
-                    
+
                     Ok(IterableProtocolRes::Continue)
                 }
                 STPollResult::STResult(res) => {
@@ -210,7 +214,7 @@ where
                         .handle
                         .response_tx
                         .send_return(StateTransferProgress::StateTransferProgress(res));
-                    
+
                     Ok(IterableProtocolRes::Continue)
                 }
             }

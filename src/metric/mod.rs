@@ -1,5 +1,7 @@
 use atlas_metrics::metrics::MetricKind;
 use atlas_metrics::{MetricLevel, MetricRegistry};
+use lazy_static::lazy_static;
+use std::sync::Arc;
 
 // Replica will get the 5XX metrics codes
 
@@ -199,3 +201,8 @@ pub fn metrics() -> Vec<MetricRegistry> {
             .into(),
     ]
 }
+
+lazy_static! (
+    pub static ref PASSED_TO_DECISION_LOG: Arc<str> = Arc::from("PASS_DECISION_LOG");
+    pub static ref RECEIVED_FROM_DECISION_LOG: Arc<str> = Arc::from("END_DECISION_LOG");
+);

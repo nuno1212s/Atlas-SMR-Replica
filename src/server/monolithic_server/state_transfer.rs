@@ -24,8 +24,8 @@ use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
 use atlas_smr_core::state_transfer::Checkpoint;
 
 use crate::metric::{APP_STATE_DIGEST_TIME_ID, STATE_TRANSFER_PROCESS_TIME_ID};
-use crate::server::IterableProtocolRes;
 use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};
+use crate::server::IterableProtocolRes;
 
 pub struct MonStateTransfer<V, S, NT, PL, ST>
 where
@@ -68,8 +68,8 @@ where
     ) where
         ST: MonolithicStateTransferInitializer<S, NT, PL>,
         NT: StateTransferSendNode<ST::Serialization>
-        + RegularNetworkStub<StateSys<ST::Serialization>>
-        + 'static,
+            + RegularNetworkStub<StateSys<ST::Serialization>>
+            + 'static,
     {
         std::thread::Builder::new()
             .name(String::from("State transfer thread"))
@@ -106,8 +106,10 @@ where
         let mut last_loop = Instant::now();
 
         loop {
-            match self.inner_state
-                .iterate(&mut self.state_transfer_protocol)? {
+            match self
+                .inner_state
+                .iterate(&mut self.state_transfer_protocol)?
+            {
                 IterableProtocolRes::ReRun => {
                     metric_duration(STATE_TRANSFER_PROCESS_TIME_ID, last_loop.elapsed());
                 }
@@ -141,7 +143,10 @@ where
         self.execution_finished_with_appstate(checkpoint.seq(), checkpoint.into_state())
     }
 
-    fn handle_received_digested_checkpoint(&mut self, checkpoint: Arc<ReadOnly<Checkpoint<S>>>) -> Result<()> {
+    fn handle_received_digested_checkpoint(
+        &mut self,
+        checkpoint: Arc<ReadOnly<Checkpoint<S>>>,
+    ) -> Result<()> {
         self.state_transfer_protocol
             .handle_state_received_from_app(checkpoint.clone())?;
         self.inner_state

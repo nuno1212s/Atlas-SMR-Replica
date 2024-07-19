@@ -39,4 +39,5 @@ atlas-persistent-log = { path = "../Atlas-Persistent-Log" }
 atlas-reconfiguration = { path = "../Atlas-Reconfiguration" }
 atlas-smr-execution = { path = "../Atlas-SMR-Execution" }
 futures-timer = "3.0.2"
-either = "1.9.0"
+either = "*"
+lazy_static = "*"

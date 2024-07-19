@@ -27,6 +27,8 @@ use atlas_communication::reconfiguration::{
 };
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::executor::DecisionExecutorHandle;
+use atlas_core::messages::{create_rq_correlation_id, create_rq_correlation_id_from_info};
+use atlas_core::metric::RQ_BATCH_TRACKING_ID;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
 use atlas_core::ordering_protocol::networking::{
@@ -39,8 +41,9 @@ use atlas_core::ordering_protocol::reconfigurable_order_protocol::{
     ReconfigurableOrderProtocol, ReconfigurationAttemptResult,
 };
 use atlas_core::ordering_protocol::{
-    DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OPResult, OrderingProtocol,
-    OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolMessage, ShareableMessage, View,
+    DecisionInfo, DecisionsAhead, ExecutionResult, OPExecResult, OPPollResult, OPResult,
+    OrderingProtocol, OrderingProtocolArgs, PermissionedOrderingProtocol, ProtocolMessage,
+    ShareableMessage, View,
 };
 use atlas_core::persistent_log::OperationMode;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
@@ -60,7 +63,10 @@ use atlas_logging_core::decision_log::{
 };
 use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
-use atlas_metrics::metrics::{metric_duration, metric_increment};
+use atlas_metrics::metrics::{
+    metric_correlation_id_ended, metric_correlation_id_passed, metric_decapsulate_correlation_id,
+    metric_duration, metric_increment,
+};
 use atlas_persistent_log::{NoPersistentLog, PersistentLogModeTrait};
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::exec::WrappedExecHandle;
@@ -69,7 +75,7 @@ use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::request_pre_processing::{
     initialize_request_pre_processor, OrderedRqHandles, RequestPreProcessor, UnorderedRqHandles,
 };
-use atlas_smr_core::serialize::{ServiceMessage, SMRSysMessage, SMRSysMsg};
+use atlas_smr_core::serialize::{SMRSysMessage, SMRSysMsg, ServiceMessage};
 use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::{STResult, StateTransferProtocol};
 use atlas_smr_core::{SMRRawReq, SMRReq};
@@ -77,8 +83,9 @@ use atlas_smr_core::{SMRRawReq, SMRReq};
 use crate::config::ReplicaConfig;
 use crate::metric::{
     OP_MESSAGES_PROCESSED_ID, ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID,
-    REPLICA_INTERNAL_PROCESS_TIME_ID, REPLICA_ORDERED_RQS_PROCESSED_ID,
-    REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, REPLICA_TAKE_FROM_NETWORK_ID, TIMEOUT_PROCESS_TIME_ID,
+    PASSED_TO_DECISION_LOG, RECEIVED_FROM_DECISION_LOG, REPLICA_INTERNAL_PROCESS_TIME_ID,
+    REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID,
+    REPLICA_TAKE_FROM_NETWORK_ID, TIMEOUT_PROCESS_TIME_ID,
 };
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::decision_log::{
@@ -139,19 +146,19 @@ pub(crate) enum LogTransferState {
 pub type Exec<D: ApplicationData> = WrappedExecHandle<D::Request>;
 
 type ViewType<D, VT, OP, NT, R: PermissionedProtocolHandling<D, VT, OP, NT>> =
-<R as PermissionedProtocolHandling<D, VT, OP, NT>>::View;
+    <R as PermissionedProtocolHandling<D, VT, OP, NT>>::View;
 
 pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 where
     NT: SMRReplicaNetworkNode<
-        RP::InformationProvider,
-        RP::Serialization,
-        D,
-        OP::Serialization,
-        LT::Serialization,
-        VT::Serialization,
-        ST::Serialization,
-    > + 'static,
+            RP::InformationProvider,
+            RP::Serialization,
+            D,
+            OP::Serialization,
+            LT::Serialization,
+            VT::Serialization,
+            ST::Serialization,
+        > + 'static,
     D: ApplicationData + 'static,
     OP: LoggableOrderProtocol<SMRReq<D>>,
     DL: DecisionLog<SMRReq<D>, OP>,
@@ -159,7 +166,7 @@ where
     VT: ViewTransferProtocol<OP>,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
-    + 'static,
+        + 'static,
     RP: ReconfigurationProtocol + 'static,
 {
     execution_state: ExecutionPhase,
@@ -214,11 +221,11 @@ pub struct QuorumReconfig {
     node_pending_join: Option<NodeId>,
 }
 
-/// 
+///
 enum IterableProtocolRes {
     ReRun,
     Receive,
-    Continue
+    Continue,
 }
 
 /// The trait with methods specific to reconfigurable protocol handle
@@ -349,7 +356,7 @@ where
             replica_node_args,
             reconfiguration_handler,
         )
-            .await?;
+        .await?;
 
         info!(
             "{:?} // Waiting for reconfiguration protocol to stabilize",
@@ -461,7 +468,7 @@ where
             node_config,
             reconfiguration_handler.clone(),
         )
-            .await?;
+        .await?;
 
         Ok(Arc::new(node))
     }
@@ -481,7 +488,7 @@ where
             reconfiguration_handler,
             OP::get_n_for_f(1),
         )
-            .await?;
+        .await?;
 
         Ok(reconfig_protocol)
     }
@@ -661,21 +668,18 @@ where
     }
 
     pub fn iterate(&mut self) -> Result<()> {
-        trace!("Iterating protocols with current execution state {:?}", self.execution_state);
-        
+        trace!(
+            "Iterating protocols with current execution state {:?}",
+            self.execution_state
+        );
+
         let protocol_result = match self.execution_state {
-            ExecutionPhase::OrderProtocol => {
-                self.run_order_protocol()?
-            }
-            ExecutionPhase::ViewTransferProtocol => {
-                self.iterate_view_transfer_protocol()?
-            }
+            ExecutionPhase::OrderProtocol => self.run_order_protocol()?,
+            ExecutionPhase::ViewTransferProtocol => self.iterate_view_transfer_protocol()?,
         };
 
         match protocol_result {
-            IterableProtocolRes::ReRun => {
-                Ok(())
-            }
+            IterableProtocolRes::ReRun => Ok(()),
             IterableProtocolRes::Receive | IterableProtocolRes::Continue => {
                 self.receive_internal_select()
             }
@@ -807,13 +811,12 @@ where
         Ok(IterableProtocolRes::Continue)
     }
 
-    fn handle_network_message_received(&mut self, network_msg:
-    StoredMessage<
-        ServiceMessage<D,
-            OP::Serialization,
-            LT::Serialization,
-            VT::Serialization>
-    >) -> Result<()> {
+    fn handle_network_message_received(
+        &mut self,
+        network_msg: StoredMessage<
+            ServiceMessage<D, OP::Serialization, LT::Serialization, VT::Serialization>,
+        >,
+    ) -> Result<()> {
         let (header, message) = network_msg.into_inner();
 
         match message {
@@ -852,42 +855,44 @@ where
 
                 let view = self.view();
 
-                self.decision_log_handle.send_work(
-                    DLWorkMessage::init_log_transfer_message(
+                self.decision_log_handle
+                    .send_work(DLWorkMessage::init_log_transfer_message(
                         view,
                         LogTransferWorkMessage::LogTransferMessage(strd_msg),
-                    ),
-                );
+                    ));
             }
         }
 
         Ok(())
     }
 
-    fn handle_decision_log_work_message(&mut self, decision_log_message: ReplicaWorkResponses) -> Result<()> {
+    fn handle_decision_log_work_message(
+        &mut self,
+        decision_log_message: ReplicaWorkResponses,
+    ) -> Result<()> {
         match decision_log_message {
             ReplicaWorkResponses::InstallSeqNo(seq_no) => {
                 info!(
-                        "Installing sequence number {:?} into order protocol",
-                        seq_no
-                    );
+                    "Installing sequence number {:?} into order protocol",
+                    seq_no
+                );
 
                 self.ordering_protocol.install_seq_no(seq_no)?;
                 debug!("Done installing");
             }
             ReplicaWorkResponses::LogTransferFinalized(first_seq, last_seq) => {
                 info!(
-                        "Log transfer finalized with sequence range {:?} to {:?}",
-                        first_seq, last_seq
-                    );
+                    "Log transfer finalized with sequence range {:?} to {:?}",
+                    first_seq, last_seq
+                );
 
                 self.handle_log_transfer_done(first_seq, last_seq)?;
             }
             ReplicaWorkResponses::LogTransferNotNeeded(first_seq, last_seq) => {
                 info!(
-                        "Log transfer not needed with sequence range {:?} to {:?}",
-                        first_seq, last_seq
-                    );
+                    "Log transfer not needed with sequence range {:?} to {:?}",
+                    first_seq, last_seq
+                );
 
                 self.handle_log_transfer_done(first_seq, last_seq)?;
             }
@@ -904,7 +909,10 @@ where
         Ok(())
     }
 
-    fn handle_state_transfer_progress_message(&mut self, state_transfer_message: StateTransferProgress) -> Result<()> {
+    fn handle_state_transfer_progress_message(
+        &mut self,
+        state_transfer_message: StateTransferProgress,
+    ) -> Result<()> {
         match state_transfer_message {
             StateTransferProgress::StateTransferProgress(progress) => {
                 self.handle_state_transfer_result(progress)?;
@@ -1050,6 +1058,29 @@ where
                     }
                 }
 
+                decision
+                    .iter()
+                    .filter(|decision| {
+                        decision
+                            .decision_info()
+                            .iter()
+                            .position(|info| {
+                                if let DecisionInfo::DecisionDone(_) = info {
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                            .is_some()
+                    })
+                    .for_each(|dec| {
+                        metric_correlation_id_passed(
+                            RQ_BATCH_TRACKING_ID,
+                            dec.sequence_number().into_u32().to_string(),
+                            PASSED_TO_DECISION_LOG.clone(),
+                        )
+                    });
+
                 let dec_log_work = DLWorkMessage::init_dec_log_message(
                     self.view(),
                     DecisionLogWorkMessage::DecisionInformation(decision),
@@ -1107,6 +1138,20 @@ where
     ) -> Result<()> {
         for decision in decisions.into_iter() {
             let (seq, requests, to_batch) = decision.into_inner();
+
+            metric_correlation_id_ended(
+                RQ_BATCH_TRACKING_ID,
+                seq.into_u32().to_string(),
+                RECEIVED_FROM_DECISION_LOG.clone(),
+            );
+
+            requests.iter().for_each(|req| {
+                metric_decapsulate_correlation_id(
+                    RQ_BATCH_TRACKING_ID,
+                    create_rq_correlation_id_from_info(req),
+                    RECEIVED_FROM_DECISION_LOG.clone(),
+                )
+            });
 
             if let Err(err) = self.rq_pre_processor.process_decided_batch(requests) {
                 error!("Error sending decided batch to pre processor: {:?}", err);
@@ -1209,7 +1254,6 @@ where
 
         Ok(())
     }
-
 
     /// Receive from all internal channels, that equate to other protocols which are running
     /// in parallel.
@@ -1593,7 +1637,7 @@ impl QuorumReconfig {
 }
 
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, VT, OP, NT>
-for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 where
     D: ApplicationData + 'static,
     OP: LoggableOrderProtocol<SMRReq<D>>,
@@ -1602,17 +1646,17 @@ where
     VT: ViewTransferProtocol<OP>,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
-    + 'static,
+        + 'static,
     RP: ReconfigurationProtocol + 'static,
     NT: SMRReplicaNetworkNode<
-        RP::InformationProvider,
-        RP::Serialization,
-        D,
-        OP::Serialization,
-        LT::Serialization,
-        VT::Serialization,
-        ST::Serialization,
-    > + 'static,
+            RP::InformationProvider,
+            RP::Serialization,
+            D,
+            OP::Serialization,
+            LT::Serialization,
+            VT::Serialization,
+            ST::Serialization,
+        > + 'static,
 {
     default type View = MockView;
 
@@ -1641,7 +1685,7 @@ where
 }
 
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> PermissionedProtocolHandling<D, VT, OP, NT>
-for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 where
     D: ApplicationData + 'static,
     OP: LoggableOrderProtocol<SMRReq<D>> + PermissionedOrderingProtocol + 'static,
@@ -1650,17 +1694,17 @@ where
     VT: ViewTransferProtocol<OP> + 'static,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send + 'static,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
-    + 'static,
+        + 'static,
     RP: ReconfigurationProtocol + 'static,
     NT: SMRReplicaNetworkNode<
-        RP::InformationProvider,
-        RP::Serialization,
-        D,
-        OP::Serialization,
-        LT::Serialization,
-        VT::Serialization,
-        ST::Serialization,
-    > + 'static,
+            RP::InformationProvider,
+            RP::Serialization,
+            D,
+            OP::Serialization,
+            LT::Serialization,
+            VT::Serialization,
+            ST::Serialization,
+        > + 'static,
 {
     type View = View<OP::PermissionedSerialization>;
 
@@ -1734,7 +1778,7 @@ where
 
 /// Default protocol with no reconfiguration support handling
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling
-for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 where
     RP: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
@@ -1744,16 +1788,16 @@ where
     VT: ViewTransferProtocol<OP>,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send,
     NT: SMRReplicaNetworkNode<
-        RP::InformationProvider,
-        RP::Serialization,
-        D,
-        OP::Serialization,
-        LT::Serialization,
-        VT::Serialization,
-        ST::Serialization,
-    > + 'static,
+            RP::InformationProvider,
+            RP::Serialization,
+            D,
+            OP::Serialization,
+            LT::Serialization,
+            VT::Serialization,
+            ST::Serialization,
+        > + 'static,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
-    + 'static,
+        + 'static,
 {
     default fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
         self.reply_to_quorum_entrance_request(node, Either::Right(AlterationFailReason::Failed))
@@ -1766,29 +1810,29 @@ where
 
 /// Implement reconfigurable order protocol support
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> ReconfigurableProtocolHandling
-for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
+    for Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 where
     RP: ReconfigurationProtocol + 'static,
     D: ApplicationData + 'static,
     OP: LoggableOrderProtocol<SMRReq<D>>
-    + ReconfigurableOrderProtocol<RP::Serialization>
-    + Send
-    + 'static,
+        + ReconfigurableOrderProtocol<RP::Serialization>
+        + Send
+        + 'static,
     DL: DecisionLog<SMRReq<D>, OP> + 'static,
     LT: LogTransferProtocol<SMRReq<D>, OP, DL> + 'static,
     VT: ViewTransferProtocol<OP> + 'static,
     ST: StateTransferProtocol<S> + PersistableStateTransferProtocol + Send + 'static,
     NT: SMRReplicaNetworkNode<
-        RP::InformationProvider,
-        RP::Serialization,
-        D,
-        OP::Serialization,
-        LT::Serialization,
-        VT::Serialization,
-        ST::Serialization,
-    > + 'static,
+            RP::InformationProvider,
+            RP::Serialization,
+            D,
+            OP::Serialization,
+            LT::Serialization,
+            VT::Serialization,
+            ST::Serialization,
+        > + 'static,
     PL: SMRPersistentLog<D, OP::Serialization, OP::PersistableTypes, DL::LogSerialization>
-    + 'static,
+        + 'static,
 {
     fn attempt_quorum_join(&mut self, node: NodeId) -> Result<()> {
         match self.execution_state {
