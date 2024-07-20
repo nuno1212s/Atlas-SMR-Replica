@@ -202,7 +202,7 @@ pub fn metrics() -> Vec<MetricRegistry> {
     ]
 }
 
-lazy_static! (
+lazy_static! {
     pub static ref PASSED_TO_DECISION_LOG: Arc<str> = Arc::from("PASS_DECISION_LOG");
     pub static ref RECEIVED_FROM_DECISION_LOG: Arc<str> = Arc::from("END_DECISION_LOG");
-);
+}
