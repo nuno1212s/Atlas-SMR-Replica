@@ -47,7 +47,7 @@ use atlas_smr_core::SMRRawReq;
 use crate::server::state_transfer::{StateTransferThreadHandle, StateTransferWorkMessage};
 use crate::server::CHECKPOINT_PERIOD;
 
-const CHANNEL_SIZE: usize = 128;
+const CHANNEL_SIZE: usize = 1024;
 
 /// The handle to the decision log thread
 ///

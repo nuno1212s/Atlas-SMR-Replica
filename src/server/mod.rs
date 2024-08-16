@@ -308,6 +308,7 @@ where
             node: node_config,
             reconfig_node,
             p,
+            preprocessor_threads,
         } = cfg;
 
         let network_info = RP::init_default_information(reconfig_node)?;
@@ -379,7 +380,7 @@ where
             quorum
         );
 
-        let (ordered, unordered) = Self::initialize_rq_pre_processor(4, &node);
+        let (ordered, unordered) = Self::initialize_rq_pre_processor(preprocessor_threads, &node);
 
         Self::initialize_unordered_rq_bridge(unordered, executor.clone())?;
 
@@ -518,19 +519,22 @@ where
         concurrency: usize,
         node: &NT,
     ) -> (OrderedRqHandles<SMRReq<D>>, UnorderedRqHandles<SMRReq<D>>) {
-        initialize_request_pre_processor::<WDRoundRobin, D, NT::ApplicationNode>(4, node.app_node())
+        initialize_request_pre_processor::<WDRoundRobin, D, NT::ApplicationNode>(
+            concurrency,
+            node.app_node(),
+        )
     }
 
     fn initialize_timeouts(node_id: NodeId) -> (TimeoutsHandle, ChannelSyncRx<Vec<Timeout>>) {
         debug!("Initializing timeouts");
 
-        let default_timeout = Duration::from_secs(3);
+        let default_timeout = Duration::from_secs(10);
 
         let (exec_tx, exec_rx) =
             channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL, Some("Timeout Reception channel"));
 
         (
-            initialize_timeouts(node_id.clone(), 2, 128, TimeoutHandler::from(exec_tx)),
+            initialize_timeouts(node_id.clone(), 4, 1024, TimeoutHandler::from(exec_tx)),
             exec_rx,
         )
     }
@@ -705,67 +709,7 @@ where
                 self.run_transfer_protocols()?;
             }
             OPPollResult::ReceiveMsg => {
-                let start = Instant::now();
-
-                let network_message = self
-                    .node
-                    .protocol_node()
-                    .incoming_stub()
-                    .try_receive_messages(Some(REPLICA_WAIT_TIME))?;
-
-                metric_duration(REPLICA_TAKE_FROM_NETWORK_ID, start.elapsed());
-
-                if let Some(network_message) = network_message {
-                    let (header, message) = network_message.into_inner();
-
-                    match message {
-                        SystemMessage::ProtocolMessage(protocol) => {
-                            let message = Arc::new(ReadOnly::new(StoredMessage::new(
-                                header,
-                                protocol.into_inner(),
-                            )));
-
-                            self.execute_order_protocol_message(message)?;
-                        }
-                        SystemMessage::ViewTransferMessage(view_transfer) => {
-                            let strd_msg = StoredMessage::new(header, view_transfer.into_inner());
-
-                            self.handle_view_transfer_msg(strd_msg)?;
-                        }
-                        SystemMessage::ForwardedRequestMessage(fwd_reqs) => {
-                            // Send the forwarded requests to be handled, filtered and then passed onto the ordering protocol
-                            self.rq_pre_processor
-                                .process_forwarded_requests(StoredMessage::new(header, fwd_reqs))?;
-                        }
-                        SystemMessage::ForwardedProtocolMessage(fwd_protocol) => {
-                            let message = fwd_protocol.into_inner();
-
-                            let (header, message) = message.into_inner();
-
-                            let message = Arc::new(ReadOnly::new(StoredMessage::new(
-                                header,
-                                message.into_inner(),
-                            )));
-
-                            self.execute_order_protocol_message(message)?;
-                        }
-                        SystemMessage::LogTransferMessage(log_transfer) => {
-                            let strd_msg = StoredMessage::new(header, log_transfer.into_inner());
-
-                            let view = self.view();
-
-                            self.decision_log_handle.send_work(
-                                DLWorkMessage::init_log_transfer_message(
-                                    view,
-                                    LogTransferWorkMessage::LogTransferMessage(strd_msg),
-                                ),
-                            );
-                        }
-                    }
-                } else {
-                    // Receive timeouts in the beginning of the next iteration
-                    return Ok(IterableProtocolRes::Continue);
-                }
+                self.receive_internal_select()?;
             }
             OPPollResult::Exec(message) => {
                 self.execute_order_protocol_message(message)?;
@@ -1271,7 +1215,7 @@ where
                 Ok((timeouts, deleted)) => self.processed_timeout_recvd(timeouts, deleted),
                 Err(err) => Err!(err),
             },
-            default(Duration::from_millis(10)) => Ok(()),
+            default(Duration::from_millis(1)) => Ok(()),
         }
     }
 
@@ -1302,8 +1246,9 @@ where
                         &mod_id
                     );
 
-                    self.rq_pre_processor
-                        .process_timeouts(timeouts, self.processed_timeout.0.clone())?;
+                    //TODO: Re enable
+                    /*self.rq_pre_processor
+                    .process_timeouts(timeouts, self.processed_timeout.0.clone())?;*/
                 } else if Arc::ptr_eq(&mod_id, &RP::mod_name()) {
                     info!(
                         "Delivering {} timeouts to reconfiguration protocol {}",
@@ -1359,12 +1304,13 @@ where
                 .collect(),
         );
 
-        match self.ordering_protocol.handle_timeout(timed_out)? {
+        // TODO: Handle the timed out timeouts
+        /*match self.ordering_protocol.handle_timeout(timed_out)? {
             OPExecResult::RunCst => {
                 self.run_transfer_protocols()?;
             }
             _ => {}
-        };
+        };*/
 
         Ok(())
     }
@@ -1934,7 +1880,7 @@ impl NetworkView for MockView {
 /// Every `PERIOD` messages, the message log is cleared,
 /// and a new log checkpoint is initiated.
 /// TODO: Move this to an env variable as it can be highly dependent on the service implemented on top of it
-pub const CHECKPOINT_PERIOD: u32 = 10000;
+pub const CHECKPOINT_PERIOD: u32 = 1000;
 
 #[derive(Error, Debug)]
 pub enum SMRReplicaError {

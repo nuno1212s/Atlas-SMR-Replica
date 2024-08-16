@@ -136,5 +136,8 @@ where
     /// The configuration for the reconfiguration protocol
     pub reconfig_node: RF::Config,
 
+    /// The amount of threads to allocate for the request pre-processor
+    pub preprocessor_threads: usize,
+
     pub p: PhantomData<S>,
 }
