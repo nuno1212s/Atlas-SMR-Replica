@@ -1,11 +1,11 @@
+use anyhow::Context;
+use either::Either;
+use getset::Getters;
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
-
-use either::Either;
-use getset::Getters;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::metric::{
@@ -279,10 +279,12 @@ where
 
                 match message {
                     DLWorkMessageType::DecisionLog(dl_message) => {
-                        self.handle_decision_log_work(dl_message)?;
+                        self.handle_decision_log_work(dl_message)
+                            .context("Decision log work error")?;
                     }
                     DLWorkMessageType::LogTransfer(lt_message) => {
-                        self.handle_log_transfer_work(view, lt_message)?;
+                        self.handle_log_transfer_work(view, lt_message)
+                            .context("Log transfer working error")?;
                     }
                 }
             }
