@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use atlas_common::channel;
-use atlas_common::channel::ChannelSyncRx;
+use atlas_common::channel::sync::ChannelSyncRx;
 use atlas_common::globals::ReadOnly;
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::StoredMessage;
@@ -58,7 +58,7 @@ where
         VT: ViewTransferProtocolMessage + 'static,
         NT: RegularNetworkStub<Service<D, OP, LP, VT>>,
     {
-        let (tx, rx) = channel::new_bounded_sync(1024, Some("Follower Channel"));
+        let (tx, rx) = channel::sync::new_bounded_sync(1024, Some("Follower Channel"));
 
         let follower_handling = Self {
             own_id: id,

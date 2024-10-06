@@ -2,7 +2,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use atlas_common::channel;
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::node_id::NodeId;
 use atlas_core::messages::ReplyMessage;
 use atlas_core::ordering_protocol::networking::serialize::{
@@ -76,7 +76,7 @@ where
 {
     pub fn new(node_id: NodeId, send_node: Arc<NT>) -> ReplyHandle<D> {
         let (ch_tx, ch_rx) =
-            channel::new_bounded_sync(REPLY_CHANNEL_SIZE, Some("Reply channel work channel"));
+            channel::sync::new_bounded_sync(REPLY_CHANNEL_SIZE, Some("Reply channel work channel"));
 
         let reply_task = Self {
             node_id,

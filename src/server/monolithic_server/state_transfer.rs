@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use tracing::error;
 
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -79,7 +79,7 @@ where
                         .expect("Failed to initialize state transfer inner layer");
 
                 let digest_app_state =
-                    channel::new_bounded_sync(5, Some("Digested App State Channel"));
+                    channel::sync::new_bounded_sync(5, Some("Digested App State Channel"));
 
                 let state_transfer_protocol =
                     ST::initialize(st_config, timeouts, node, persistent_log, state_tx.clone())
@@ -129,7 +129,7 @@ where
     fn receive_from_all_channels(&mut self) -> Result<()> {
         let inner_handle = self.inner_state.handle();
 
-        channel::sync_select_biased! {
+        channel::sync::sync_select_biased! {
             recv(unwrap_channel!(inner_handle.work_rx())) -> work_msg => self.inner_state.handle_work_message(&mut self.state_transfer_protocol,work_msg?),
             recv(unwrap_channel!(self.checkpoint_rx_from_app)) -> checkpoint_from_app => self.handle_checkpoint_received(checkpoint_from_app?),
             recv(unwrap_channel!(self.digested_state.1)) -> digested => self.handle_received_digested_checkpoint(digested?),

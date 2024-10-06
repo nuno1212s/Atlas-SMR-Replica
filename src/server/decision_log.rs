@@ -13,7 +13,7 @@ use crate::metric::{
     DEC_LOG_WORK_QUEUE_SIZE_ID,
 };
 use atlas_common::channel;
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -214,10 +214,10 @@ where
         LT: LogTransferProtocolInitializer<SMRRawReq<R>, OP, DL, PL, WrappedExecHandle<R>, NT>,
     {
         let (dl_work_tx, dl_work_rx) =
-            channel::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Work Channel"));
+            channel::sync::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Work Channel"));
 
         let (rp_work_tx, rp_work_rx) =
-            channel::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Replica Resp Channel"));
+            channel::sync::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Replica Resp Channel"));
 
         let handle = DecisionLogHandle {
             work_tx: dl_work_tx,
@@ -520,7 +520,7 @@ where
             let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
                 //We check that % == 0 so we don't start multiple checkpoints
 
-                let (e_tx, e_rx) = channel::new_oneshot_channel();
+                let (e_tx, e_rx) = channel::oneshot::new_oneshot_channel();
 
                 debug!(
                     "Checking if checkpoint is needed with state transfer protocol {:?}",

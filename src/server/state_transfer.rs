@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use crate::server::{IterableProtocolRes, REPLICA_WAIT_TIME};
 use atlas_common::channel;
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotTx};
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::oneshot::{OneShotTx};
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::message::StoredMessage;
@@ -85,8 +86,8 @@ where
     V: NetworkView,
 {
     let (work_tx, work_rx) =
-        channel::new_bounded_sync(WORK_CHANNEL_SIZE, Some("State transfer Work Channel"));
-    let (response_tx, response_rx) = channel::new_bounded_sync(
+        channel::sync::new_bounded_sync(WORK_CHANNEL_SIZE, Some("State transfer Work Channel"));
+    let (response_tx, response_rx) = channel::sync::new_bounded_sync(
         RESPONSE_CHANNEL_SIZE,
         Some("State Transfer Response Channel"),
     );

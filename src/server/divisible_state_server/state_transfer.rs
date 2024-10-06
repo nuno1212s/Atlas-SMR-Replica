@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::{channel, unwrap_channel};
 use atlas_communication::stub::RegularNetworkStub;
@@ -111,7 +111,7 @@ where
     fn receive_from_all_channels(&mut self) -> Result<()> {
         let inner_handle = self.inner_state.handle();
 
-        channel::sync_select_biased! {
+        channel::sync::sync_select_biased! {
             recv(unwrap_channel!(inner_handle.work_rx())) -> work_msg =>
             self.inner_state.handle_work_message(&mut self.state_transfer_protocol, work_msg?),
             recv(unwrap_channel!(self.checkpoint_rx_from_app)) -> checkpoint_msg =>

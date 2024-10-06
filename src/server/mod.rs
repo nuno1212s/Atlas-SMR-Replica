@@ -13,7 +13,8 @@ use itertools::Itertools;
 use thiserror::Error;
 use tracing::{debug, error, info, instrument, trace};
 
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx, OneShotRx, OneShotTx};
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::oneshot::{OneShotRx, OneShotTx};
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::maybe_vec::MaybeVec;
@@ -329,18 +330,18 @@ where
             Self::initialize_network_protocol(network_info.clone(), node_config, network_handler)
                 .await?;
 
-        let (reconf_tx, reconf_rx) = channel::new_bounded_sync(
+        let (reconf_tx, reconf_rx) = channel::sync::new_bounded_sync(
             REPLICA_MESSAGE_CHANNEL,
             Some("Reconfiguration Channel message"),
         );
 
-        let (reconf_response_tx, reply_rx) = channel::new_bounded_sync(
+        let (reconf_response_tx, reply_rx) = channel::sync::new_bounded_sync(
             REPLICA_MESSAGE_CHANNEL,
             Some("Reconfiguration Channel Response Message"),
         );
 
         let (network_update_tx, network_update_rx) =
-            channel::new_bounded_sync(128, Some("Network update channel"));
+            channel::sync::new_bounded_sync(128, Some("Network update channel"));
 
         let replica_node_args = (
             network_update_tx,
@@ -428,7 +429,7 @@ where
 
         info!("{:?} // Finished bootstrapping node.", log_node_id);
 
-        let timeout_channel = channel::new_bounded_sync(1024, Some("SMR Timeout work channel"));
+        let timeout_channel = channel::sync::new_bounded_sync(1024, Some("SMR Timeout work channel"));
 
         let (rq_pre_processor, _) = ordered.into();
 
@@ -531,7 +532,7 @@ where
         let default_timeout = Duration::from_secs(10);
 
         let (exec_tx, exec_rx) =
-            channel::new_bounded_sync(REPLICA_MESSAGE_CHANNEL, Some("Timeout Reception channel"));
+            channel::sync::new_bounded_sync(REPLICA_MESSAGE_CHANNEL, Some("Timeout Reception channel"));
 
         (
             initialize_timeouts(node_id.clone(), 4, 1024, TimeoutHandler::from(exec_tx)),
@@ -1106,7 +1107,7 @@ where
             let checkpoint = if last_seq_no_u32 > 0 && last_seq_no_u32 % CHECKPOINT_PERIOD == 0 {
                 //We check that % == 0 so we don't start multiple checkpoints
 
-                let (e_tx, e_rx) = channel::new_oneshot_channel();
+                let (e_tx, e_rx) = channel::oneshot::new_oneshot_channel();
 
                 self.state_transfer_handle
                     .send_work_message(StateTransferWorkMessage::ShouldRequestAppState(seq, e_tx));
@@ -1204,7 +1205,7 @@ where
     /// All functions called by this should be NON-BLOCKING (and should use try_recv) as this WILL
     /// tank the performance of the orchestrator.
     fn receive_internal_select(&mut self) -> Result<()> {
-        channel::sync_select_biased! {
+        channel::sync::sync_select_biased! {
             recv(unwrap_channel!(self.node.protocol_node().incoming_stub().as_ref())) -> network_msg => self.handle_network_message_received(network_msg?),
             recv(unwrap_channel!(self.decision_log_handle.status_rx())) -> status_msg => self.handle_decision_log_work_message(status_msg?),
             recv(unwrap_channel!(self.state_transfer_handle.response_rx())) -> state_msg => self.handle_state_transfer_progress_message(state_msg?),
