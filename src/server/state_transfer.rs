@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::server::{IterableProtocolRes, REPLICA_WAIT_TIME};
 use atlas_common::channel;
+use atlas_common::channel::oneshot::OneShotTx;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
-use atlas_common::channel::oneshot::{OneShotTx};
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::message::StoredMessage;

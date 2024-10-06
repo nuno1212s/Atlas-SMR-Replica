@@ -216,8 +216,10 @@ where
         let (dl_work_tx, dl_work_rx) =
             channel::sync::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Work Channel"));
 
-        let (rp_work_tx, rp_work_rx) =
-            channel::sync::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Replica Resp Channel"));
+        let (rp_work_tx, rp_work_rx) = channel::sync::new_bounded_sync(
+            CHANNEL_SIZE,
+            Some("Decision Log Replica Resp Channel"),
+        );
 
         let handle = DecisionLogHandle {
             work_tx: dl_work_tx,

@@ -13,8 +13,8 @@ use itertools::Itertools;
 use thiserror::Error;
 use tracing::{debug, error, info, instrument, trace};
 
-use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::channel::oneshot::{OneShotRx, OneShotTx};
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::globals::ReadOnly;
 use atlas_common::maybe_vec::MaybeVec;
@@ -261,6 +261,34 @@ where
     ) -> Result<()>;
 }
 
+macro_rules! consume_message_exhaust {
+    ($existing_msg: expr, $channel: expr, $self_obj: expr, $consumption: ident) => {
+        {
+            $self_obj.$consumption($existing_msg)?;
+            
+            while let Ok(message) = $channel.try_recv() {
+                $self_obj.$consumption(message)?;
+            }
+            
+            Ok(())
+        }
+    };
+}
+
+macro_rules! exhaust_and_consume {
+    ($channel:expr, $self_obj:expr, $consumption:ident) => {
+        while let Ok(message) = $channel.try_recv() {
+            $self_obj.$consumption(message)?;
+        }
+    };
+    ($channel: expr, $self_obj:expr, $consumption:ident, $timeout: expr) => {
+        while let Ok(message) = $channel.recv_timeout($timeout) {
+            $self_obj.$consumption(message)?;
+        }
+    };
+    
+}
+
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 where
     RP: ReconfigurationProtocol + 'static,
@@ -429,7 +457,8 @@ where
 
         info!("{:?} // Finished bootstrapping node.", log_node_id);
 
-        let timeout_channel = channel::sync::new_bounded_sync(1024, Some("SMR Timeout work channel"));
+        let timeout_channel =
+            channel::sync::new_bounded_sync(1024, Some("SMR Timeout work channel"));
 
         let (rq_pre_processor, _) = ordered.into();
 
@@ -531,8 +560,10 @@ where
 
         let default_timeout = Duration::from_secs(10);
 
-        let (exec_tx, exec_rx) =
-            channel::sync::new_bounded_sync(REPLICA_MESSAGE_CHANNEL, Some("Timeout Reception channel"));
+        let (exec_tx, exec_rx) = channel::sync::new_bounded_sync(
+            REPLICA_MESSAGE_CHANNEL,
+            Some("Timeout Reception channel"),
+        );
 
         (
             initialize_timeouts(node_id.clone(), 4, 1024, TimeoutHandler::from(exec_tx)),
@@ -686,7 +717,7 @@ where
         match protocol_result {
             IterableProtocolRes::ReRun => Ok(()),
             IterableProtocolRes::Receive | IterableProtocolRes::Continue => {
-                self.receive_internal_select()
+                self.receive_internal()
             }
         }
     }
@@ -710,7 +741,7 @@ where
                 self.run_transfer_protocols()?;
             }
             OPPollResult::ReceiveMsg => {
-                self.receive_internal_select()?;
+                return Ok(IterableProtocolRes::Receive);
             }
             OPPollResult::Exec(message) => {
                 self.execute_order_protocol_message(message)?;
@@ -1200,24 +1231,67 @@ where
         Ok(())
     }
 
+    fn receive_internal(&mut self) -> Result<()> {
+        self.receive_internal_select()
+    }
+    
     /// Receive from all internal channels, that equate to other protocols which are running
     /// in parallel.
     /// All functions called by this should be NON-BLOCKING (and should use try_recv) as this WILL
     /// tank the performance of the orchestrator.
     fn receive_internal_select(&mut self) -> Result<()> {
         channel::sync::sync_select_biased! {
-            recv(unwrap_channel!(self.node.protocol_node().incoming_stub().as_ref())) -> network_msg => self.handle_network_message_received(network_msg?),
-            recv(unwrap_channel!(self.decision_log_handle.status_rx())) -> status_msg => self.handle_decision_log_work_message(status_msg?),
-            recv(unwrap_channel!(self.state_transfer_handle.response_rx())) -> state_msg => self.handle_state_transfer_progress_message(state_msg?),
-            recv(unwrap_channel!(self.network_update_listener)) -> network_update => self.handle_network_update_message(network_update?),
-            recv(unwrap_channel!(self.reconf_receive)) -> reconf_msg => self.handle_reconfiguration_protocol_message(reconf_msg?),
-            recv(unwrap_channel!(self.timeout_rx)) -> timeout => self.timeout_received(timeout?),
+            recv(unwrap_channel!(self.node.protocol_node().incoming_stub().as_ref())) -> network_msg => consume_message_exhaust!(network_msg?, self.node.protocol_node().incoming_stub().as_ref(), self, handle_network_message_received),
+            recv(unwrap_channel!(self.decision_log_handle.status_rx())) -> status_msg => consume_message_exhaust!(status_msg?, self.decision_log_handle.status_rx(), self, handle_decision_log_work_message),
+            recv(unwrap_channel!(self.state_transfer_handle.response_rx())) -> state_msg => consume_message_exhaust!(state_msg?, self.state_transfer_handle.response_rx(), self, handle_state_transfer_progress_message),
+            recv(unwrap_channel!(self.network_update_listener)) -> network_update => consume_message_exhaust!(network_update?, self.network_update_listener, self, handle_network_update_message),
+            recv(unwrap_channel!(self.reconf_receive)) -> reconf_msg => consume_message_exhaust!(reconf_msg?, self.reconf_receive, self, handle_reconfiguration_protocol_message),
+            recv(unwrap_channel!(self.timeout_rx)) -> timeout => consume_message_exhaust!(timeout?, self.timeout_rx, self, timeout_received),
             recv(unwrap_channel!(self.processed_timeout.1)) -> timeout_msg => match timeout_msg {
                 Ok((timeouts, deleted)) => self.processed_timeout_recvd(timeouts, deleted),
                 Err(err) => Err!(err),
             },
             default(Duration::from_millis(1)) => Ok(()),
         }
+    }
+    
+    fn receive_internal_exhaust(&mut self) -> Result<()> {
+        exhaust_and_consume!(
+            self.decision_log_handle.status_rx(),
+            self,
+            handle_decision_log_work_message
+        );
+        exhaust_and_consume!(
+            self.state_transfer_handle.response_rx(),
+            self,
+            handle_state_transfer_progress_message
+        );
+        exhaust_and_consume!(
+            self.network_update_listener,
+            self,
+            handle_network_update_message
+        );
+        exhaust_and_consume!(
+            self.reconf_receive,
+            self,
+            handle_reconfiguration_protocol_message
+        );
+        exhaust_and_consume!(self.timeout_rx, self, timeout_received);
+        exhaust_and_consume!(self.processed_timeout.1, self, process_timeout_message);
+        exhaust_and_consume!(
+            self.node.protocol_node().incoming_stub().as_ref(),
+            self,
+            handle_network_message_received
+        );
+
+        Ok(())
+    }
+
+    fn process_timeout_message(
+        &mut self,
+        (message, to_delete): (Vec<ModTimeout>, Vec<ModTimeout>),
+    ) -> Result<()> {
+        self.processed_timeout_recvd(message, to_delete)
     }
 
     #[instrument(skip_all, fields(timeout_len = timeouts.len()))]
