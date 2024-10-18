@@ -144,7 +144,7 @@ pub(crate) enum LogTransferState {
     Done(SeqNo, SeqNo),
 }
 
-pub type Exec<D: ApplicationData> = WrappedExecHandle<D::Request>;
+pub type Exec<D> = WrappedExecHandle<D::Request>;
 
 type ViewType<D, VT, OP, NT, R: PermissionedProtocolHandling<D, VT, OP, NT>> =
     <R as PermissionedProtocolHandling<D, VT, OP, NT>>::View;
