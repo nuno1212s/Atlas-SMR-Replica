@@ -1,10 +1,11 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Instant};
 
 use tracing::error;
 
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
+use atlas_common::exhaust_and_consume;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{channel, threadpool, unwrap_channel};
@@ -125,8 +126,12 @@ where
 
         Ok(())
     }
-
+    
     fn receive_from_all_channels(&mut self) -> Result<()> {
+        self.receive_from_all_channels_exhaust()
+    }
+
+    /*fn receive_from_all_channels_select(&mut self) -> Result<()> {
         let inner_handle = self.inner_state.handle();
 
         channel::sync::sync_select_biased! {
@@ -137,6 +142,24 @@ where
             self.inner_state.handle_network_message(&mut self.state_transfer_protocol, network_msg?),
             default(Duration::from_millis(5)) => Ok(()),
         }
+    }*/
+    
+    fn receive_from_all_channels_exhaust(&mut self) -> Result<()> {
+        
+        let inner_handle = self.inner_state.handle().clone();
+        
+        while let Ok(message) = inner_handle.work_rx().try_recv() {
+            self.inner_state.handle_work_message(&mut self.state_transfer_protocol, message)?;
+        }
+        
+        exhaust_and_consume!(self.checkpoint_rx_from_app, self, handle_checkpoint_received);
+        exhaust_and_consume!(self.digested_state.1, self, handle_received_digested_checkpoint);
+        
+        while let Ok(message) = self.inner_state.node().incoming_stub().as_ref().try_recv() {
+            self.inner_state.handle_network_message(&mut self.state_transfer_protocol, message)?;
+        }
+        
+        Ok(())
     }
 
     fn handle_checkpoint_received(&mut self, checkpoint: AppStateMessage<S>) -> Result<()> {
@@ -169,7 +192,7 @@ where
                 Ok(digest) => {
                     let checkpoint = Checkpoint::new(seq, appstate, digest);
 
-                    return_tx.send_return(checkpoint).unwrap();
+                    return_tx.send(checkpoint).unwrap();
 
                     metric_duration(APP_STATE_DIGEST_TIME_ID, start.elapsed());
                 }

@@ -20,7 +20,7 @@ use atlas_common::globals::ReadOnly;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{channel, unwrap_channel, Err};
+use atlas_common::{channel, exhaust_and_consume, unwrap_channel, Err};
 use atlas_communication::message::StoredMessage;
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkReconfigurationCommunication,
@@ -261,33 +261,7 @@ where
     ) -> Result<()>;
 }
 
-macro_rules! consume_message_exhaust {
-    ($existing_msg: expr, $channel: expr, $self_obj: expr, $consumption: ident) => {
-        {
-            $self_obj.$consumption($existing_msg)?;
-            
-            while let Ok(message) = $channel.try_recv() {
-                $self_obj.$consumption(message)?;
-            }
-            
-            Ok(())
-        }
-    };
-}
 
-macro_rules! exhaust_and_consume {
-    ($channel:expr, $self_obj:expr, $consumption:ident) => {
-        while let Ok(message) = $channel.try_recv() {
-            $self_obj.$consumption(message)?;
-        }
-    };
-    ($channel: expr, $self_obj:expr, $consumption:ident, $timeout: expr) => {
-        while let Ok(message) = $channel.recv_timeout($timeout) {
-            $self_obj.$consumption(message)?;
-        }
-    };
-    
-}
 
 impl<RP, S, D, OP, DL, ST, LT, VT, NT, PL> Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 where
@@ -533,7 +507,7 @@ where
         let quorum = match message {
             QuorumReconfigurationMessage::ReconfigurationProtocolStable(quorum) => {
                 reconf_response_tx
-                    .send_return(QuorumReconfigurationResponse::QuorumStableResponse(true))?;
+                    .send(QuorumReconfigurationResponse::QuorumStableResponse(true))?;
 
                 quorum
             }
@@ -1232,28 +1206,28 @@ where
     }
 
     fn receive_internal(&mut self) -> Result<()> {
-        self.receive_internal_select()
+        self.receive_internal_exhaust()
     }
     
     /// Receive from all internal channels, that equate to other protocols which are running
     /// in parallel.
     /// All functions called by this should be NON-BLOCKING (and should use try_recv) as this WILL
     /// tank the performance of the orchestrator.
-    fn receive_internal_select(&mut self) -> Result<()> {
+    /*fn receive_internal_select(&mut self) -> Result<()> {
         channel::sync::sync_select_biased! {
-            recv(unwrap_channel!(self.node.protocol_node().incoming_stub().as_ref())) -> network_msg => consume_message_exhaust!(network_msg?, self.node.protocol_node().incoming_stub().as_ref(), self, handle_network_message_received),
-            recv(unwrap_channel!(self.decision_log_handle.status_rx())) -> status_msg => consume_message_exhaust!(status_msg?, self.decision_log_handle.status_rx(), self, handle_decision_log_work_message),
-            recv(unwrap_channel!(self.state_transfer_handle.response_rx())) -> state_msg => consume_message_exhaust!(state_msg?, self.state_transfer_handle.response_rx(), self, handle_state_transfer_progress_message),
-            recv(unwrap_channel!(self.network_update_listener)) -> network_update => consume_message_exhaust!(network_update?, self.network_update_listener, self, handle_network_update_message),
-            recv(unwrap_channel!(self.reconf_receive)) -> reconf_msg => consume_message_exhaust!(reconf_msg?, self.reconf_receive, self, handle_reconfiguration_protocol_message),
-            recv(unwrap_channel!(self.timeout_rx)) -> timeout => consume_message_exhaust!(timeout?, self.timeout_rx, self, timeout_received),
+            recv(unwrap_channel!(self.node.protocol_node().incoming_stub().as_ref())) -> network_msg => exhaust_and_consume!(network_msg?, self.node.protocol_node().incoming_stub().as_ref(), self, handle_network_message_received),
+            recv(unwrap_channel!(self.decision_log_handle.status_rx())) -> status_msg => exhaust_and_consume!(status_msg?, self.decision_log_handle.status_rx(), self, handle_decision_log_work_message),
+            recv(unwrap_channel!(self.state_transfer_handle.response_rx())) -> state_msg => exhaust_and_consume!(state_msg?, self.state_transfer_handle.response_rx(), self, handle_state_transfer_progress_message),
+            recv(unwrap_channel!(self.network_update_listener)) -> network_update => exhaust_and_consume!(network_update?, self.network_update_listener, self, handle_network_update_message),
+            recv(unwrap_channel!(self.reconf_receive)) -> reconf_msg => exhaust_and_consume!(reconf_msg?, self.reconf_receive, self, handle_reconfiguration_protocol_message),
+            recv(unwrap_channel!(self.timeout_rx)) -> timeout => exhaust_and_consume!(timeout?, self.timeout_rx, self, timeout_received),
             recv(unwrap_channel!(self.processed_timeout.1)) -> timeout_msg => match timeout_msg {
                 Ok((timeouts, deleted)) => self.processed_timeout_recvd(timeouts, deleted),
                 Err(err) => Err!(err),
             },
             default(Duration::from_millis(1)) => Ok(()),
         }
-    }
+    }*/
     
     fn receive_internal_exhaust(&mut self) -> Result<()> {
         exhaust_and_consume!(
@@ -1589,13 +1563,13 @@ where
 
         if failed {
             self.reconf_tx
-                .send_return(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(
+                .send(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(
                     QuorumAttemptJoinResponse::Failed,
                 ))
                 .context("Error sending quorum entrance response to reconfiguration protocol")?;
         } else {
             self.reconf_tx
-                .send_return(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(
+                .send(QuorumReconfigurationResponse::QuorumAttemptJoinResponse(
                     QuorumAttemptJoinResponse::Success,
                 ))
                 .context("Error sending quorum entrance response to reconfiguration protocol")?;
@@ -1616,7 +1590,7 @@ where
         match failed_reason {
             Either::Left(quorum) => {
                 self.reconf_tx
-                    .send_return(QuorumReconfigurationResponse::QuorumAlterationResponse(
+                    .send(QuorumReconfigurationResponse::QuorumAlterationResponse(
                         QuorumAlterationResponse::Successful(
                             node_id,
                             OP::get_f_for_n(quorum.len()),
@@ -1628,7 +1602,7 @@ where
             }
             Either::Right(fail_reason) => {
                 self.reconf_tx
-                    .send_return(QuorumReconfigurationResponse::QuorumAlterationResponse(
+                    .send(QuorumReconfigurationResponse::QuorumAlterationResponse(
                         QuorumAlterationResponse::Failed(node_id, fail_reason),
                     ))
                     .context(

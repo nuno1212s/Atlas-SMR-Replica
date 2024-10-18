@@ -421,7 +421,7 @@ where
                             "Log transfer protocol is not necessary, running decision log protocol"
                         );
 
-                        let _ = self.order_protocol_tx.send_return(
+                        let _ = self.order_protocol_tx.send(
                             ReplicaWorkResponses::LogTransferNotNeeded(
                                 self.decision_log.first_sequence(),
                                 self.decision_log.sequence_number(),
@@ -432,12 +432,12 @@ where
                     LTResult::InstallSeq(seq) => {
                         let _ = self
                             .order_protocol_tx
-                            .send_return(ReplicaWorkResponses::InstallSeqNo(seq.next()));
+                            .send(ReplicaWorkResponses::InstallSeqNo(seq.next()));
                     }
                     LTResult::LTPFinished(init_seq, last_se, decisions_to_execute) => {
                         self.pending_decisions_to_execute = Some(decisions_to_execute);
 
-                        let _ = self.order_protocol_tx.send_return(
+                        let _ = self.order_protocol_tx.send(
                             ReplicaWorkResponses::LogTransferFinalized(init_seq, last_se),
                         );
                     }
@@ -602,7 +602,7 @@ where
     pub fn send_work(&self, work_message: DLWorkMessage<V, RQ, OPM, POT, LTM>) {
         let start = Instant::now();
 
-        let _ = self.work_tx.send_return(work_message);
+        let _ = self.work_tx.send(work_message);
 
         metric_duration(DEC_LOG_WORK_MSG_TIME_ID, start.elapsed());
         metric_store_count(DEC_LOG_WORK_QUEUE_SIZE_ID, self.work_tx.len());

@@ -4,13 +4,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use atlas_common::error::*;
-use atlas_common::ordering::Orderable;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::NetworkedOrderProtocolInitializer;
 use atlas_core::ordering_protocol::permissioned::{
     ViewTransferProtocol, ViewTransferProtocolInitializer,
 };
-use atlas_core::ordering_protocol::reconfigurable_order_protocol::ReconfigurableOrderProtocol;
 use atlas_core::ordering_protocol::PermissionedOrderingProtocol;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;

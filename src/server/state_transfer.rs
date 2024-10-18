@@ -1,20 +1,18 @@
 use std::marker::PhantomData;
-use std::path::Iter;
 use std::sync::Arc;
 
-use crate::server::{IterableProtocolRes, REPLICA_WAIT_TIME};
+use crate::server::{IterableProtocolRes};
 use atlas_common::channel;
 use atlas_common::channel::oneshot::OneShotTx;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::message::StoredMessage;
-use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
+use atlas_communication::stub::{ RegularNetworkStub};
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::ExecutionResult;
 use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_smr_core::serialize::StateSys;
-use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
 use atlas_smr_core::state_transfer::{CstM, STPollResult, STResult, StateTransferProtocol};
 use either::Either;
@@ -131,7 +129,7 @@ where
     pub fn notify_of_checkpoint(&self, seq: SeqNo) {
         self.handle
             .response_tx
-            .send_return(StateTransferProgress::CheckpointReceived(seq))
+            .send(StateTransferProgress::CheckpointReceived(seq))
             .unwrap()
     }
 
@@ -187,7 +185,7 @@ where
                 let _ = self
                     .handle
                     .response_tx
-                    .send_return(StateTransferProgress::StateTransferProgress(st_result));
+                    .send(StateTransferProgress::StateTransferProgress(st_result));
             }
         } else {
             let _ = state_transfer.handle_off_ctx_message(view, message);
@@ -206,7 +204,7 @@ where
                     let _ = self
                         .handle
                         .response_tx
-                        .send_return(StateTransferProgress::StateTransferProgress(res));
+                        .send(StateTransferProgress::StateTransferProgress(res));
 
                     Ok(IterableProtocolRes::Continue)
                 }
@@ -214,7 +212,7 @@ where
                     let _ = self
                         .handle
                         .response_tx
-                        .send_return(StateTransferProgress::StateTransferProgress(res));
+                        .send(StateTransferProgress::StateTransferProgress(res));
 
                     Ok(IterableProtocolRes::Continue)
                 }
@@ -248,7 +246,7 @@ where
     V: NetworkView,
 {
     pub fn send_work_message(&self, msg: StateTransferWorkMessage<V>) {
-        let _ = self.work_tx.send_return(msg);
+        let _ = self.work_tx.send(msg);
     }
 
     pub fn receive_state_transfer_update(&self) -> StateTransferProgress {

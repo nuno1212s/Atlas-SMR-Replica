@@ -9,20 +9,18 @@ use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_logging_core::decision_log::DecisionLog;
 use atlas_logging_core::log_transfer::LogTransferProtocol;
-use atlas_smr_application::app::{Application, Request};
+use atlas_smr_application::app::{Application};
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::divisible_state::DivisibleState;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::persistent_log::{DivisibleStateLog, MonolithicStateLog};
-use atlas_smr_core::serialize::Service;
 use atlas_smr_core::state_transfer::divisible_state::DivisibleStateTransfer;
 use atlas_smr_core::state_transfer::monolithic_state::MonolithicStateTransfer;
 use atlas_smr_core::state_transfer::StateTransferProtocol;
 use atlas_smr_core::SMRReq;
 
 use crate::persistent_log::SMRPersistentLog;
-use crate::server::Exec;
 
 pub struct MonolithicStateReplicaConfig<RF, S, A, OP, DL, ST, LT, VT, NT, PL>
 where

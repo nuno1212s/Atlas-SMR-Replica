@@ -1,8 +1,6 @@
 use crate::metric::UNORDERED_OPS_PER_SECOND_ID;
-use atlas_common::ordering::Orderable;
 use atlas_common::quiet_unwrap;
 use atlas_core::executor::DecisionExecutorHandle;
-use atlas_core::messages::SessionBased;
 use atlas_metrics::metrics::metric_increment;
 use atlas_smr_application::app::UnorderedBatch;
 use atlas_smr_application::serialize::ApplicationData;

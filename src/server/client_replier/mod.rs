@@ -5,17 +5,10 @@ use atlas_common::channel;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::node_id::NodeId;
 use atlas_core::messages::ReplyMessage;
-use atlas_core::ordering_protocol::networking::serialize::{
-    OrderingProtocolMessage, ViewTransferProtocolMessage,
-};
-use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_smr_application::app::BatchReplies;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::exec::{ReplyNode, RequestType};
-use atlas_smr_core::message::SystemMessage;
-use atlas_smr_core::serialize::Service;
-use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
-use atlas_smr_core::{SMRReply, SMRReq};
+use atlas_smr_core::{SMRReply};
 
 type RepliesType<S> = BatchReplies<S>;
 
