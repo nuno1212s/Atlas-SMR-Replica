@@ -144,7 +144,7 @@ pub(crate) enum LogTransferState {
     Done(SeqNo, SeqNo),
 }
 
-pub type Exec<D> = WrappedExecHandle<D::Request>;
+pub type Exec<D: ApplicationData> = WrappedExecHandle<D::Request>;
 
 type ViewType<D, VT, OP, NT, R: PermissionedProtocolHandling<D, VT, OP, NT>> =
     <R as PermissionedProtocolHandling<D, VT, OP, NT>>::View;
@@ -1151,7 +1151,7 @@ where
         match network_update {
             NodeConnectionUpdateMessage::NodeConnected(node_id) => {
                 info!("Node connected: {:?}", node_id);
-                self.rq_pre_processor.reset_client(node_id.node_id());
+                self.rq_pre_processor.reset_client(node_id.node_id())?;
             }
             NodeConnectionUpdateMessage::NodeDisconnected(node_id) => {
                 info!("Node disconnected: {:?}", node_id);

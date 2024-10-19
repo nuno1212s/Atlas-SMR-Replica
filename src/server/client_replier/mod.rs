@@ -128,7 +128,7 @@ where
 
                     // deliver last reply
                     if let Some((message, last_peer_id)) = curr_send {
-                        self.send_node
+                        let _ = self.send_node
                             .send(RequestType::Ordered, message, last_peer_id, true);
                     } else {
                         // slightly optimize code path;
