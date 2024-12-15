@@ -21,10 +21,13 @@ pub(crate) const STATE_TRANSFER_PROCESS_TIME_ID: usize = 502;
 pub(crate) const TIMEOUT_PROCESS_TIME: &str = "TIMEOUT_PROCESS_TIME";
 pub(crate) const TIMEOUT_PROCESS_TIME_ID: usize = 503;
 
+pub(crate) const TIMEOUT_RECEIVED_COUNT: &str = "TIMEOUT_RECEIVED_COUNT";
+pub(crate) const TIMEOUT_RECEIVED_COUNT_ID: usize = 504;
+
 /// Time taken to digest app state received from the application
 /// Not used in divisible state
 pub(crate) const APP_STATE_DIGEST_TIME: &str = "APP_STATE_DIGEST_TIME";
-pub(crate) const APP_STATE_DIGEST_TIME_ID: usize = 504;
+pub(crate) const APP_STATE_DIGEST_TIME_ID: usize = 505;
 
 /// Time taken to run the entirety of the regular replica protocols
 /// (Unrelated to monolithic or divisible state)
@@ -102,6 +105,12 @@ pub fn metrics() -> Vec<MetricRegistry> {
             MetricLevel::Debug,
         )
             .into(),
+        (
+            TIMEOUT_RECEIVED_COUNT_ID,
+            TIMEOUT_RECEIVED_COUNT.to_string(),
+            MetricKind::Counter,
+            MetricLevel::Debug,
+            ).into(),
         (
             APP_STATE_DIGEST_TIME_ID,
             APP_STATE_DIGEST_TIME.to_string(),

@@ -164,13 +164,13 @@ where
         loop {
             self.inner_replica.iterate()?;
 
-            metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());
-
             if let Some(trigger) = trigger.as_ref() {
                 if trigger.load(Ordering::Relaxed) {
                     break Ok(()); // Exit the loop
                 }
             }
+
+            metric_duration(RUN_LATENCY_TIME_ID, last_loop.elapsed());
 
             last_loop = Instant::now();
         }
