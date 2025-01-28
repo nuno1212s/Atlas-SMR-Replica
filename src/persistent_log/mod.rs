@@ -1,10 +1,9 @@
 use std::path::Path;
 
 use atlas_common::error::*;
-use atlas_common::serialization_helper::SerType;
-use atlas_core::ordering_protocol::loggable::{
-    OrderProtocolPersistenceHelper, PersistentOrderProtocolTypes,
-};
+use atlas_common::serialization_helper::SerMsg;
+use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
+use atlas_core::ordering_protocol::loggable::OrderProtocolLogHelper;
 use atlas_core::ordering_protocol::networking::serialize::OrderingProtocolMessage;
 use atlas_core::persistent_log::{OrderingProtocolLog, PersistableStateTransferProtocol};
 use atlas_logging_core::decision_log::serialize::DecisionLogMessage;
@@ -37,7 +36,7 @@ where
     where
         K: AsRef<Path>,
         T: PersistentLogModeTrait,
-        POS: OrderProtocolPersistenceHelper<SMRReq<D>, OPM, POPT> + Send + 'static,
+        POS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT> + Send + 'static,
         PSP: PersistableStateTransferProtocol + Send + 'static,
         DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
         Self: Sized;
@@ -62,7 +61,7 @@ where
     where
         K: AsRef<Path>,
         T: PersistentLogModeTrait,
-        POS: OrderProtocolPersistenceHelper<SMRReq<D>, OPM, POPT> + Send + 'static,
+        POS: OrderProtocolLogHelper<SMRReq<D>, OPM, POPT> + Send + 'static,
         PSP: PersistableStateTransferProtocol + Send + 'static,
         DLPH: DecisionLogPersistenceHelper<SMRReq<D>, OPM, POPT, LS> + 'static,
         Self: Sized,

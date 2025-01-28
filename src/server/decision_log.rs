@@ -17,12 +17,13 @@ use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::serialization_helper::SerType;
+use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 use atlas_core::executor::DecisionExecutorHandle;
 use atlas_core::ordering_protocol::loggable::{
-    LoggableOrderProtocol, PProof, PersistentOrderProtocolTypes,
+    LoggableOrderProtocol, PProof,
 };
+use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
 use atlas_core::ordering_protocol::{
     Decision, DecisionMetadata, ExecutionResult, OrderingProtocol, ProtocolMessage,
@@ -58,7 +59,7 @@ const CHANNEL_SIZE: usize = 1024;
 pub struct DecisionLogHandle<V, RQ, OPM, POT, LTM>
 where
     V: NetworkView,
-    RQ: SerType,
+    RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
     POT: PersistentOrderProtocolTypes<RQ, OPM>,
     LTM: LogTransferMessage<RQ, OPM>,
@@ -70,7 +71,7 @@ where
 
 pub enum DecisionLogWorkMessage<RQ, OPM, POT>
 where
-    RQ: SerType,
+    RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
     POT: PersistentOrderProtocolTypes<RQ, OPM>,
 {
@@ -93,7 +94,7 @@ pub enum ReplicaWorkResponses {
 
 pub enum LogTransferWorkMessage<RQ, OPM, LTM>
 where
-    RQ: SerType,
+    RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
     LTM: LogTransferMessage<RQ, OPM>,
 {
@@ -105,7 +106,7 @@ where
 
 pub enum DLWorkMessageType<RQ, OPM, POT, LTM>
 where
-    RQ: SerType,
+    RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
     POT: PersistentOrderProtocolTypes<RQ, OPM>,
     LTM: LogTransferMessage<RQ, OPM>,
@@ -117,7 +118,7 @@ where
 pub struct DLWorkMessage<V, RQ, OPM, POT, LTM>
 where
     V: NetworkView,
-    RQ: SerType,
+    RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
     POT: PersistentOrderProtocolTypes<RQ, OPM>,
     LTM: LogTransferMessage<RQ, OPM>,
@@ -128,7 +129,7 @@ where
 
 pub enum DecisionLogResponseMessage<RQ>
 where
-    RQ: SerType,
+    RQ: SerMsg,
 {
     InstallSeqNo(SeqNo),
     TransferProtocolFinished(SeqNo, SeqNo, MaybeVec<LoggedDecision<RQ>>),
@@ -142,7 +143,7 @@ pub enum ActivePhase {
 /// The work queue for the decision log
 pub struct DecisionLogWorkQueue<RQ, OPM, POT>
 where
-    RQ: SerType,
+    RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
     POT: PersistentOrderProtocolTypes<RQ, OPM>,
 {
@@ -152,7 +153,7 @@ where
 pub struct DecisionLogManager<V, R, OP, DL, LT, NT, PL>
 where
     V: NetworkView,
-    R: SerType,
+    R: SerMsg,
     OP: LoggableOrderProtocol<SMRRawReq<R>>,
     DL: DecisionLog<SMRRawReq<R>, OP>,
     LT: LogTransferProtocol<SMRRawReq<R>, OP, DL>,
@@ -177,7 +178,7 @@ where
 impl<V, R, OP, DL, LT, NT, PL> DecisionLogManager<V, R, OP, DL, LT, NT, PL>
 where
     V: NetworkView + 'static,
-    R: SerType,
+    R: SerMsg,
     OP: LoggableOrderProtocol<SMRRawReq<R>>,
     DL: DecisionLog<SMRRawReq<R>, OP> + Send,
     LT: LogTransferProtocol<SMRRawReq<R>, OP, DL> + Send,
@@ -567,7 +568,7 @@ where
 impl<V, RQ, OPM, POT, LTM> DLWorkMessage<V, RQ, OPM, POT, LTM>
 where
     V: NetworkView,
-    RQ: SerType,
+    RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
     POT: PersistentOrderProtocolTypes<RQ, OPM>,
     LTM: LogTransferMessage<RQ, OPM>,
@@ -594,7 +595,7 @@ where
 impl<V, RQ, OPM, POT, LTM> DecisionLogHandle<V, RQ, OPM, POT, LTM>
 where
     V: NetworkView,
-    RQ: SerType,
+    RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
     POT: PersistentOrderProtocolTypes<RQ, OPM>,
     LTM: LogTransferMessage<RQ, OPM>,
@@ -625,7 +626,7 @@ where
 
 impl<RQ, OPM, POT> Debug for DecisionLogWorkMessage<RQ, OPM, POT>
 where
-    RQ: SerType,
+    RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
     POT: PersistentOrderProtocolTypes<RQ, OPM>,
 {
@@ -652,7 +653,7 @@ where
 
 impl<RQ, OPM, LTM> Debug for LogTransferWorkMessage<RQ, OPM, LTM>
 where
-    RQ: SerType,
+    RQ: SerMsg,
     OPM: OrderingProtocolMessage<RQ>,
     LTM: LogTransferMessage<RQ, OPM>,
 {

@@ -768,10 +768,10 @@ where
 
         match message {
             SystemMessage::ProtocolMessage(protocol) => {
-                let message = Arc::new(ReadOnly::new(StoredMessage::new(
+                let message = Arc::new(StoredMessage::new(
                     header,
                     protocol.into_inner(),
-                )));
+                ));
 
                 self.execute_order_protocol_message(message)?;
             }
@@ -790,10 +790,10 @@ where
 
                 let (header, message) = message.into_inner();
 
-                let message = Arc::new(ReadOnly::new(StoredMessage::new(
+                let message = Arc::new(StoredMessage::new(
                     header,
                     message.into_inner(),
-                )));
+                ));
 
                 self.execute_order_protocol_message(message)?;
             }
