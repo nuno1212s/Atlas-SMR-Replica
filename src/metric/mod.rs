@@ -110,7 +110,8 @@ pub fn metrics() -> Vec<MetricRegistry> {
             TIMEOUT_RECEIVED_COUNT.to_string(),
             MetricKind::Counter,
             MetricLevel::Debug,
-            ).into(),
+        )
+            .into(),
         (
             APP_STATE_DIGEST_TIME_ID,
             APP_STATE_DIGEST_TIME.to_string(),

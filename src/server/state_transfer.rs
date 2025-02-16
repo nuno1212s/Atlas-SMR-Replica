@@ -1,14 +1,14 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::server::{IterableProtocolRes};
+use crate::server::IterableProtocolRes;
 use atlas_common::channel;
 use atlas_common::channel::oneshot::OneShotTx;
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::ordering::SeqNo;
 use atlas_communication::message::StoredMessage;
-use atlas_communication::stub::{ RegularNetworkStub};
+use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::ExecutionResult;
 use atlas_core::timeouts::timeout::ModTimeout;

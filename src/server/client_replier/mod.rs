@@ -8,7 +8,7 @@ use atlas_core::messages::ReplyMessage;
 use atlas_smr_application::app::BatchReplies;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::exec::{ReplyNode, RequestType};
-use atlas_smr_core::{SMRReply};
+use atlas_smr_core::SMRReply;
 
 type RepliesType<S> = BatchReplies<S>;
 
@@ -128,8 +128,9 @@ where
 
                     // deliver last reply
                     if let Some((message, last_peer_id)) = curr_send {
-                        let _ = self.send_node
-                            .send(RequestType::Ordered, message, last_peer_id, true);
+                        let _ =
+                            self.send_node
+                                .send(RequestType::Ordered, message, last_peer_id, true);
                     } else {
                         // slightly optimize code path;
                         // the previous if branch will always execute

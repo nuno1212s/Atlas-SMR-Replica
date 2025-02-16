@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Instant};
+use std::time::Instant;
 
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
@@ -58,8 +58,8 @@ where
     ) where
         ST: DivisibleStateTransferInitializer<S, NT, PL>,
         NT: StateTransferSendNode<ST::Serialization>
-        + RegularNetworkStub<StateSys<ST::Serialization>>
-        + 'static,
+            + RegularNetworkStub<StateSys<ST::Serialization>>
+            + 'static,
     {
         std::thread::Builder::new()
             .name(String::from("State transfer thread"))
@@ -129,13 +129,15 @@ where
         let inner_handle = self.inner_state.handle().clone();
 
         while let Ok(message) = inner_handle.work_rx().try_recv() {
-            self.inner_state.handle_work_message(&mut self.state_transfer_protocol, message)?;
+            self.inner_state
+                .handle_work_message(&mut self.state_transfer_protocol, message)?;
         }
-        
+
         exhaust_and_consume!(self.checkpoint_rx_from_app, self, handle_checkpoint_message);
 
         while let Ok(message) = self.inner_state.node().incoming_stub().as_ref().try_recv() {
-            self.inner_state.handle_network_message(&mut self.state_transfer_protocol, message)?;
+            self.inner_state
+                .handle_network_message(&mut self.state_transfer_protocol, message)?;
         }
 
         Ok(())

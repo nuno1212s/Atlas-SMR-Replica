@@ -20,12 +20,12 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::serialization_helper::SerMsg;
 use atlas_communication::message::StoredMessage;
 use atlas_core::executor::DecisionExecutorHandle;
-use atlas_core::ordering_protocol::loggable::{
-    LoggableOrderProtocol, PProof,
-};
 use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTypes;
+use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
-use atlas_core::ordering_protocol::{Decision, DecisionAD, DecisionMetadata, ExecutionResult, OrderingProtocol, ProtocolMessage};
+use atlas_core::ordering_protocol::{
+    Decision, DecisionAD, DecisionMetadata, ExecutionResult, OrderingProtocol, ProtocolMessage,
+};
 use atlas_core::request_pre_processing::RequestPreProcessing;
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle};
 use atlas_logging_core::decision_log::{
@@ -76,7 +76,9 @@ where
     ClearSequenceNumber(SeqNo),
     ClearUnfinishedDecisions,
     DecisionInformation(
-        MaybeVec<Decision<DecisionMetadata<RQ, OPM>, DecisionAD<RQ, OPM>, ProtocolMessage<RQ, OPM>, RQ>>,
+        MaybeVec<
+            Decision<DecisionMetadata<RQ, OPM>, DecisionAD<RQ, OPM>, ProtocolMessage<RQ, OPM>, RQ>,
+        >,
     ),
     Proof(PProof<RQ, OPM, POT>),
     CheckpointDone(SeqNo),

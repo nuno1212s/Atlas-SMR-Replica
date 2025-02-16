@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Instant};
+use std::time::Instant;
 
 use tracing::error;
 
@@ -126,7 +126,7 @@ where
 
         Ok(())
     }
-    
+
     fn receive_from_all_channels(&mut self) -> Result<()> {
         self.receive_from_all_channels_exhaust()
     }
@@ -143,22 +143,31 @@ where
             default(Duration::from_millis(5)) => Ok(()),
         }
     }*/
-    
+
     fn receive_from_all_channels_exhaust(&mut self) -> Result<()> {
-        
         let inner_handle = self.inner_state.handle().clone();
-        
+
         while let Ok(message) = inner_handle.work_rx().try_recv() {
-            self.inner_state.handle_work_message(&mut self.state_transfer_protocol, message)?;
+            self.inner_state
+                .handle_work_message(&mut self.state_transfer_protocol, message)?;
         }
-        
-        exhaust_and_consume!(self.checkpoint_rx_from_app, self, handle_checkpoint_received);
-        exhaust_and_consume!(self.digested_state.1, self, handle_received_digested_checkpoint);
-        
+
+        exhaust_and_consume!(
+            self.checkpoint_rx_from_app,
+            self,
+            handle_checkpoint_received
+        );
+        exhaust_and_consume!(
+            self.digested_state.1,
+            self,
+            handle_received_digested_checkpoint
+        );
+
         while let Ok(message) = self.inner_state.node().incoming_stub().as_ref().try_recv() {
-            self.inner_state.handle_network_message(&mut self.state_transfer_protocol, message)?;
+            self.inner_state
+                .handle_network_message(&mut self.state_transfer_protocol, message)?;
         }
-        
+
         Ok(())
     }
 

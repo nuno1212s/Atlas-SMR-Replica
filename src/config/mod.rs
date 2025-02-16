@@ -9,7 +9,7 @@ use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_logging_core::decision_log::DecisionLog;
 use atlas_logging_core::log_transfer::LogTransferProtocol;
-use atlas_smr_application::app::{Application};
+use atlas_smr_application::app::Application;
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_application::state::divisible_state::DivisibleState;
 use atlas_smr_application::state::monolithic_state::MonolithicState;
