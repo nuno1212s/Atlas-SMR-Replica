@@ -1199,14 +1199,14 @@ where
     }
 
     fn receive_internal(&mut self) -> Result<()> {
-        self.receive_internal_exhaust()
+        self.receive_internal_select()
     }
 
     /// Receive from all internal channels, that equate to other protocols which are running
     /// in parallel.
     /// All functions called by this should be NON-BLOCKING (and should use try_recv) as this WILL
     /// tank the performance of the orchestrator.
-    /*fn receive_internal_select(&mut self) -> Result<()> {
+    fn receive_internal_select(&mut self) -> Result<()> {
         channel::sync::sync_select_biased! {
             recv(unwrap_channel!(self.node.protocol_node().incoming_stub().as_ref())) -> network_msg => exhaust_and_consume!(network_msg?, self.node.protocol_node().incoming_stub().as_ref(), self, handle_network_message_received),
             recv(unwrap_channel!(self.decision_log_handle.status_rx())) -> status_msg => exhaust_and_consume!(status_msg?, self.decision_log_handle.status_rx(), self, handle_decision_log_work_message),
@@ -1220,7 +1220,7 @@ where
             },
             default(Duration::from_millis(1)) => Ok(()),
         }
-    }*/
+    }
 
     fn receive_internal_exhaust(&mut self) -> Result<()> {
         exhaust_and_consume!(
