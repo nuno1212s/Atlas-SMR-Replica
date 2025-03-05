@@ -1,3 +1,4 @@
+use tracing::error;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -162,7 +163,11 @@ where
         let mut last_loop = Instant::now();
 
         loop {
-            self.inner_replica.iterate()?;
+            if let Err(err) = self.inner_replica.iterate() {
+                error!("Error while executing replica {}, slowing execution for 1sec", err);
+                
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
 
             if let Some(trigger) = trigger.as_ref() {
                 if trigger.load(Ordering::Relaxed) {
