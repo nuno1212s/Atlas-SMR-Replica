@@ -10,7 +10,7 @@ use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::exec::{ReplyNode, RequestType};
 use atlas_smr_core::SMRReply;
 
-type RepliesType<S> = BatchReplies<S>;
+pub type RepliesType<S> = BatchReplies<S>;
 
 ///Dedicated thread to reply to clients
 /// This is currently not being used (we are currently using the thread pool)

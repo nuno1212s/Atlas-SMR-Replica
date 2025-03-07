@@ -9,6 +9,7 @@ use atlas_common::exhaust_and_consume;
 use atlas_common::globals::ReadOnly;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::{channel, threadpool, unwrap_channel};
+use atlas_communication::message::StoredMessage;
 use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::timeouts::timeout::TimeoutModHandle;
@@ -22,10 +23,12 @@ use atlas_smr_core::state_transfer::monolithic_state::{
     MonolithicStateTransfer, MonolithicStateTransferInitializer,
 };
 use atlas_smr_core::state_transfer::networking::StateTransferSendNode;
-use atlas_smr_core::state_transfer::Checkpoint;
+use atlas_smr_core::state_transfer::{Checkpoint, CstM};
 
 use crate::metric::{APP_STATE_DIGEST_TIME_ID, STATE_TRANSFER_PROCESS_TIME_ID};
-use crate::server::state_transfer::{StateTransferMngr, StateTransferThreadInnerHandle};
+use crate::server::state_transfer::{
+    StateTransferMngr, StateTransferThreadInnerHandle, StateTransferWorkMessage,
+};
 use crate::server::IterableProtocolRes;
 
 pub struct MonStateTransfer<V, S, NT, PL, ST>
@@ -128,30 +131,24 @@ where
     }
 
     fn receive_from_all_channels(&mut self) -> Result<()> {
-        self.receive_from_all_channels_exhaust()
+        self.receive_from_all_channels_select()
     }
 
-    /*fn receive_from_all_channels_select(&mut self) -> Result<()> {
+    fn receive_from_all_channels_select(&mut self) -> Result<()> {
         let inner_handle = self.inner_state.handle();
 
         channel::sync::sync_select_biased! {
-            recv(unwrap_channel!(inner_handle.work_rx())) -> work_msg => self.inner_state.handle_work_message(&mut self.state_transfer_protocol,work_msg?),
-            recv(unwrap_channel!(self.checkpoint_rx_from_app)) -> checkpoint_from_app => self.handle_checkpoint_received(checkpoint_from_app?),
-            recv(unwrap_channel!(self.digested_state.1)) -> digested => self.handle_received_digested_checkpoint(digested?),
+            recv(unwrap_channel!(inner_handle.work_rx())) -> work_msg => exhaust_and_consume!(work_msg?, inner_handle.work_rx(),  self, handle_work_message),
+            recv(unwrap_channel!(self.checkpoint_rx_from_app)) -> checkpoint_from_app => exhaust_and_consume!(checkpoint_from_app?, self.checkpoint_rx_from_app, self, handle_checkpoint_received),
+            recv(unwrap_channel!(self.digested_state.1)) -> digested => exhaust_and_consume!(digest?, self.digested_state.1, self, handle_received_digested_checkpoint),
             recv(unwrap_channel!(self.inner_state.node().incoming_stub().as_ref())) -> network_msg =>
-            self.inner_state.handle_network_message(&mut self.state_transfer_protocol, network_msg?),
+            exhaust_and_consume!(network_msg?, self.inner_state.node().incoming_stub().as_ref(), self, handle_network_message),
             default(Duration::from_millis(5)) => Ok(()),
         }
-    }*/
+    }
 
     fn receive_from_all_channels_exhaust(&mut self) -> Result<()> {
-        let inner_handle = self.inner_state.handle().clone();
-
-        while let Ok(message) = inner_handle.work_rx().try_recv() {
-            self.inner_state
-                .handle_work_message(&mut self.state_transfer_protocol, message)?;
-        }
-
+        exhaust_and_consume!(self.inner_state.handle().work_rx(), self, handle_work_message);
         exhaust_and_consume!(
             self.checkpoint_rx_from_app,
             self,
@@ -162,13 +159,26 @@ where
             self,
             handle_received_digested_checkpoint
         );
-
-        while let Ok(message) = self.inner_state.node().incoming_stub().as_ref().try_recv() {
-            self.inner_state
-                .handle_network_message(&mut self.state_transfer_protocol, message)?;
-        }
+        exhaust_and_consume!(
+            self.inner_state.node().incoming_stub().as_ref(),
+            self,
+            handle_network_message
+        );
 
         Ok(())
+    }
+
+    fn handle_network_message(
+        &mut self,
+        message: StoredMessage<CstM<ST::Serialization>>,
+    ) -> Result<()> {
+        self.inner_state
+            .handle_network_message(&mut self.state_transfer_protocol, message)
+    }
+
+    fn handle_work_message(&mut self, message: StateTransferWorkMessage<V>) -> Result<()> {
+        self.inner_state
+            .handle_work_message(&mut self.state_transfer_protocol, message)
     }
 
     fn handle_checkpoint_received(&mut self, checkpoint: AppStateMessage<S>) -> Result<()> {

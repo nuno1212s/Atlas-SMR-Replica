@@ -28,7 +28,9 @@ use atlas_communication::reconfiguration::{
 };
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::executor::DecisionExecutorHandle;
-use atlas_core::messages::{create_rq_correlation_id, create_rq_correlation_id_from_info};
+use atlas_core::messages::{
+    create_rq_correlation_id, create_rq_correlation_id_from_info, RequestMessage,
+};
 use atlas_core::metric::RQ_BATCH_TRACKING_ID;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
@@ -111,6 +113,23 @@ mod unordered_rq_handler;
 const REPLICA_MESSAGE_CHANNEL: usize = 1024;
 pub const REPLICA_WAIT_TIME: Duration = Duration::from_millis(1000);
 
+/// Checkpoint period.
+///
+/// Every `PERIOD` messages, the message log is cleared,
+/// and a new log checkpoint is initiated.
+/// TODO: Move this to an env variable as it can be highly dependent on the service implemented on top of it
+pub const CHECKPOINT_PERIOD: u32 = 1000;
+
+pub type Exec<D: ApplicationData> = WrappedExecHandle<D::Request>;
+
+type ViewType<
+    D: ApplicationData,
+    VT: ViewTransferProtocol<OP>,
+    OP: OrderingProtocol<SMRReq<D>>,
+    NT,
+    R: PermissionedProtocolHandling<D, VT, OP, NT>,
+> = <R as PermissionedProtocolHandling<D, VT, OP, NT>>::View;
+
 /// The current phase of the order protocol phase
 #[derive(Clone, Debug)]
 pub(crate) enum ExecutionPhase {
@@ -143,11 +162,6 @@ pub(crate) enum LogTransferState {
     Running,
     Done(SeqNo, SeqNo),
 }
-
-pub type Exec<D: ApplicationData> = WrappedExecHandle<D::Request>;
-
-type ViewType<D, VT, OP, NT, R: PermissionedProtocolHandling<D, VT, OP, NT>> =
-    <R as PermissionedProtocolHandling<D, VT, OP, NT>>::View;
 
 pub struct Replica<RP, S, D, OP, DL, ST, LT, VT, NT, PL>
 where
@@ -310,8 +324,8 @@ where
             vt_config,
             node: node_config,
             reconfig_node,
-            p,
             preprocessor_threads,
+            ..
         } = cfg;
 
         let network_info = RP::init_default_information(reconfig_node)?;
@@ -367,7 +381,7 @@ where
             log_node_id
         );
 
-        let mut quorum = Self::acquire_quorum_info(&reconf_rx, reconf_response_tx.clone())?;
+        let quorum = Self::acquire_quorum_info(&reconf_rx, reconf_response_tx.clone())?;
 
         if quorum.len() < OP::get_n_for_f(1) {
             return Err!(SMRReplicaError::QuorumNotLargeEnough(
@@ -950,13 +964,10 @@ where
             TransferPhase::NotRunning => {
                 return Err(anyhow!("How can we have finished the state transfer protocol when we are not running transfer protocols"));
             }
-            TransferPhase::RunningTransferProtocols {
-                log_transfer,
-                state_transfer,
-            } => {
-                match log_transfer {
-                    LogTransferState::Idle => {
-                        unreachable!("Received result of the log transfer while not running it?")
+            TransferPhase::RunningTransferProtocols { log_transfer, state_transfer } => {
+                match state_transfer {
+                    StateTransferState::Idle => {
+                        unreachable!("Received result of the state transfer while not running it?")
                     }
                     _ => {}
                 }
@@ -1920,13 +1931,6 @@ impl NetworkView for MockView {
         todo!()
     }
 }
-
-/// Checkpoint period.
-///
-/// Every `PERIOD` messages, the message log is cleared,
-/// and a new log checkpoint is initiated.
-/// TODO: Move this to an env variable as it can be highly dependent on the service implemented on top of it
-pub const CHECKPOINT_PERIOD: u32 = 1000;
 
 #[derive(Error, Debug)]
 pub enum SMRReplicaError {

@@ -40,7 +40,6 @@ use atlas_logging_core::persistent_log::PersistentDecisionLog;
 use atlas_metrics::metrics::{metric_duration, metric_increment, metric_store_count};
 use atlas_smr_core::exec::WrappedExecHandle;
 use atlas_smr_core::request_pre_processing::RequestPreProcessor;
-use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
 use atlas_smr_core::SMRRawReq;
 
 use crate::server::state_transfer::{StateTransferThreadHandle, StateTransferWorkMessage};
