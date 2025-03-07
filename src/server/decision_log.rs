@@ -24,7 +24,7 @@ use atlas_core::ordering_protocol::loggable::message::PersistentOrderProtocolTyp
 use atlas_core::ordering_protocol::loggable::{LoggableOrderProtocol, PProof};
 use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
 use atlas_core::ordering_protocol::{
-    Decision, DecisionAD, DecisionMetadata, ExecutionResult, OrderingProtocol, ProtocolMessage,
+    Decision, DecisionAD, DecisionMetadata, ExecutionResult, ProtocolMessage,
 };
 use atlas_core::request_pre_processing::RequestPreProcessing;
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle};

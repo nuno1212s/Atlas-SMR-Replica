@@ -1,9 +1,8 @@
 //! Contains the server side core protocol logic of `Atlas`.
 
-use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::path::{Iter, Path};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -13,10 +12,8 @@ use itertools::Itertools;
 use thiserror::Error;
 use tracing::{debug, error, info, instrument, trace};
 
-use atlas_common::channel::oneshot::{OneShotRx, OneShotTx};
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
-use atlas_common::globals::ReadOnly;
 use atlas_common::maybe_vec::MaybeVec;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -26,14 +23,12 @@ use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkReconfigurationCommunication,
     ReconfigurationNetworkCommunication,
 };
-use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
+use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::executor::DecisionExecutorHandle;
-use atlas_core::messages::{
-    create_rq_correlation_id, create_rq_correlation_id_from_info, RequestMessage,
-};
+use atlas_core::messages::create_rq_correlation_id_from_info;
 use atlas_core::metric::RQ_BATCH_TRACKING_ID;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
-use atlas_core::ordering_protocol::networking::serialize::{NetworkView, OrderingProtocolMessage};
+use atlas_core::ordering_protocol::networking::serialize::NetworkView;
 use atlas_core::ordering_protocol::networking::{
     NetworkedOrderProtocolInitializer, ViewTransferProtocolSendNode,
 };
@@ -59,12 +54,11 @@ use atlas_core::request_pre_processing::work_dividers::WDRoundRobin;
 use atlas_core::request_pre_processing::{
     RequestClientPreProcessing, RequestPreProcessing, RequestPreProcessorTimeout,
 };
-use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle};
+use atlas_core::timeouts::timeout::ModTimeout;
 use atlas_core::timeouts::{initialize_timeouts, Timeout, TimeoutIdentification, TimeoutsHandle};
 use atlas_logging_core::decision_log::{
     DecisionLog, DecisionLogInitializer, LoggedDecision, LoggedDecisionValue,
 };
-use atlas_logging_core::log_transfer::networking::serialize::LogTransferMessage;
 use atlas_logging_core::log_transfer::{LogTransferProtocol, LogTransferProtocolInitializer};
 use atlas_metrics::metrics::{
     metric_correlation_id_ended, metric_correlation_id_passed, metric_decapsulate_correlation_id,
@@ -73,22 +67,20 @@ use atlas_metrics::metrics::{
 use atlas_persistent_log::{NoPersistentLog, PersistentLogModeTrait};
 use atlas_smr_application::serialize::ApplicationData;
 use atlas_smr_core::exec::WrappedExecHandle;
-use atlas_smr_core::message::{StateTransfer, SystemMessage};
+use atlas_smr_core::message::SystemMessage;
 use atlas_smr_core::networking::SMRReplicaNetworkNode;
 use atlas_smr_core::request_pre_processing::{
     initialize_request_pre_processor, OrderedRqHandles, RequestPreProcessor, UnorderedRqHandles,
 };
-use atlas_smr_core::serialize::{SMRSysMessage, SMRSysMsg, ServiceMessage};
-use atlas_smr_core::state_transfer::networking::serialize::StateTransferMessage;
+use atlas_smr_core::serialize::ServiceMessage;
 use atlas_smr_core::state_transfer::{STResult, StateTransferProtocol};
-use atlas_smr_core::{SMRRawReq, SMRReq};
+use atlas_smr_core::SMRReq;
 
 use crate::config::ReplicaConfig;
 use crate::metric::{
     OP_MESSAGES_PROCESSED_ID, ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID,
-    PASSED_TO_DECISION_LOG, RECEIVED_FROM_DECISION_LOG, REPLICA_INTERNAL_PROCESS_TIME_ID,
-    REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID,
-    REPLICA_TAKE_FROM_NETWORK_ID, TIMEOUT_PROCESS_TIME_ID, TIMEOUT_RECEIVED_COUNT_ID,
+    PASSED_TO_DECISION_LOG, RECEIVED_FROM_DECISION_LOG,
+    REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID, TIMEOUT_RECEIVED_COUNT_ID,
 };
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::decision_log::{
@@ -100,7 +92,6 @@ use crate::server::state_transfer::{
 };
 use crate::server::timeout_handler::TimeoutHandler;
 
-pub mod client_replier;
 mod decision_log;
 pub mod divisible_state_server;
 pub mod follower_handling;
@@ -239,7 +230,7 @@ pub struct QuorumReconfig {
 }
 
 ///
-enum IterableProtocolRes {
+pub enum IterableProtocolRes {
     ReRun,
     Receive,
     Continue,
@@ -450,7 +441,7 @@ where
 
         let (rq_pre_processor, _) = ordered.into();
 
-        let mut replica = Self {
+        let replica = Self {
             execution_state: ExecutionPhase::ViewTransferProtocol,
             transfer_states: TransferPhase::NotRunning,
             quorum_reconfig_data: QuorumReconfig {
@@ -1285,7 +1276,7 @@ where
 
         timeouts
             .into_iter()
-            .group_by(|timeout| timeout.id().mod_id().clone())
+            .chunk_by(|timeout| timeout.id().mod_id().clone())
             .into_iter()
             .map(|(mod_id, timeouts)| {
                 (
@@ -1681,7 +1672,7 @@ where
 
     default fn handle_view_transfer_msg(
         &mut self,
-        message: StoredMessage<VTMsg<VT::Serialization>>,
+        _message: StoredMessage<VTMsg<VT::Serialization>>,
     ) -> Result<()> {
         Ok(())
     }

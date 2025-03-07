@@ -4,7 +4,6 @@ use atlas_common::ordering::SeqNo;
 
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
 use atlas_core::ordering_protocol::permissioned::ViewTransferProtocol;
-use atlas_core::ordering_protocol::OrderingProtocol;
 use atlas_core::persistent_log::PersistableStateTransferProtocol;
 use atlas_core::reconfiguration_protocol::ReconfigurationProtocol;
 use atlas_logging_core::decision_log::DecisionLog;

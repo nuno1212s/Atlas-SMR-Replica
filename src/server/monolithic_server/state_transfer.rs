@@ -39,8 +39,6 @@ where
     PL: MonolithicStateLog<S>,
 {
     inner_state: StateTransferMngr<V, S, NT, PL, ST>,
-
-    state_tx_to_executor: ChannelSyncTx<InstallStateMessage<S>>,
     // Receiver of checkpoints from the application
     checkpoint_rx_from_app: ChannelSyncRx<AppStateMessage<S>>,
 
@@ -91,7 +89,6 @@ where
 
                 let mut state_transfer_manager = Self {
                     inner_state: inner_mngr,
-                    state_tx_to_executor: state_tx,
                     checkpoint_rx_from_app: checkpoint_rx,
                     digested_state: digest_app_state,
                     state_transfer_protocol,
@@ -126,8 +123,6 @@ where
 
             last_loop = Instant::now();
         }
-
-        Ok(())
     }
 
     fn receive_from_all_channels(&mut self) -> Result<()> {
