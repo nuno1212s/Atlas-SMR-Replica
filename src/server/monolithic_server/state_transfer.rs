@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tracing::error;
 
@@ -135,12 +135,12 @@ where
     }
 
     fn receive_from_all_channels_select(&mut self) -> Result<()> {
-        let inner_handle = self.inner_state.handle();
+        let inner_work_rx = self.inner_state.handle().work_rx().clone();
 
         channel::sync::sync_select_biased! {
-            recv(unwrap_channel!(inner_handle.work_rx())) -> work_msg => exhaust_and_consume!(work_msg?, inner_handle.work_rx(),  self, handle_work_message),
+            recv(unwrap_channel!(inner_work_rx)) -> work_msg => exhaust_and_consume!(work_msg?, inner_work_rx, self, handle_work_message),
             recv(unwrap_channel!(self.checkpoint_rx_from_app)) -> checkpoint_from_app => exhaust_and_consume!(checkpoint_from_app?, self.checkpoint_rx_from_app, self, handle_checkpoint_received),
-            recv(unwrap_channel!(self.digested_state.1)) -> digested => exhaust_and_consume!(digest?, self.digested_state.1, self, handle_received_digested_checkpoint),
+            recv(unwrap_channel!(self.digested_state.1)) -> digested => exhaust_and_consume!(digested?, self.digested_state.1, self, handle_received_digested_checkpoint),
             recv(unwrap_channel!(self.inner_state.node().incoming_stub().as_ref())) -> network_msg =>
             exhaust_and_consume!(network_msg?, self.inner_state.node().incoming_stub().as_ref(), self, handle_network_message),
             default(Duration::from_millis(5)) => Ok(()),
