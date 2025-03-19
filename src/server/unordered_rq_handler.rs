@@ -1,4 +1,5 @@
 use crate::metric::UNORDERED_OPS_PER_SECOND_ID;
+use atlas_common::error::Result;
 use atlas_common::quiet_unwrap;
 use atlas_core::executor::DecisionExecutorHandle;
 use atlas_metrics::metrics::metric_increment;
@@ -10,8 +11,13 @@ use tracing::error;
 pub(super) fn start_unordered_rq_thread<O: ApplicationData>(
     unordered_rqs: UnorderedRqHandles<SMRReq<O>>,
     executor_handle: impl DecisionExecutorHandle<SMRReq<O>> + Send,
-) {
-    std::thread::spawn(move || unordered_rq_thread::<O>(unordered_rqs, executor_handle));
+) -> Result<()> {
+    
+    std::thread::Builder::new()
+        .name("Unordered-RQ-Passer".to_string())
+        .spawn(move || unordered_rq_thread::<O>(unordered_rqs, executor_handle))?;
+    
+    Ok(())
 }
 
 fn unordered_rq_thread<O: ApplicationData>(

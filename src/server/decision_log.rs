@@ -191,8 +191,7 @@ where
 {
     /// Initialize the decision log
     pub fn initialize_decision_log_mngt(
-        dl_config: DL::Config,
-        lt_config: LT::Config,
+        configs: (DL::Config, LT::Config),
         persistent_log: PL,
         timeouts: TimeoutModHandle,
         node: Arc<NT>,
@@ -213,6 +212,10 @@ where
         DL: DecisionLogInitializer<SMRRawReq<R>, OP, PL, WrappedExecHandle<R>>,
         LT: LogTransferProtocolInitializer<SMRRawReq<R>, OP, DL, PL, WrappedExecHandle<R>, NT>,
     {
+        let (dl_config, lt_config) = configs;
+        
+        let node_id = node.id();
+        
         let (dl_work_tx, dl_work_rx) =
             channel::sync::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Work Channel"));
 
@@ -254,16 +257,16 @@ where
                     state_transfer_handle: state_transfer_thread_handle,
                     executor_handle: execution_handle,
                     pending_decisions_to_execute: None,
-                    _ph: Default::default(),
+                    _ph: PhantomData::default(),
                 };
 
                 loop {
                     if let Err(err) = decision_log_manager.run() {
-                        error!("Ran into error while running the decision log {:?}", err)
+                        error!("{:?} Ran into error while running the decision log {:?}", node_id, err);
                     }
                 }
             })
-            .expect("Failed to launch decision log");
+            .context("Failed to launch decision log")?;
 
         Ok(handle)
     }

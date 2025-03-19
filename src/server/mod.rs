@@ -79,8 +79,8 @@ use atlas_smr_core::SMRReq;
 use crate::config::ReplicaConfig;
 use crate::metric::{
     OP_MESSAGES_PROCESSED_ID, ORDERING_PROTOCOL_POLL_TIME_ID, ORDERING_PROTOCOL_PROCESS_TIME_ID,
-    PASSED_TO_DECISION_LOG, RECEIVED_FROM_DECISION_LOG,
-    REPLICA_ORDERED_RQS_PROCESSED_ID, REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID, TIMEOUT_RECEIVED_COUNT_ID,
+    PASSED_TO_DECISION_LOG, RECEIVED_FROM_DECISION_LOG, REPLICA_ORDERED_RQS_PROCESSED_ID,
+    REPLICA_PROTOCOL_RESP_PROCESS_TIME_ID, TIMEOUT_PROCESS_TIME_ID, TIMEOUT_RECEIVED_COUNT_ID,
 };
 use crate::persistent_log::SMRPersistentLog;
 use crate::server::decision_log::{
@@ -639,8 +639,7 @@ where
             NT::ProtocolNode,
             PL,
         >::initialize_decision_log_mngt(
-            dl_config,
-            lt_config,
+            (dl_config, lt_config),
             persistent_log,
             timeouts.gen_mod_handle_with_name(LT::mod_name()),
             node.protocol_node().clone(),
@@ -955,7 +954,10 @@ where
             TransferPhase::NotRunning => {
                 return Err(anyhow!("How can we have finished the state transfer protocol when we are not running transfer protocols"));
             }
-            TransferPhase::RunningTransferProtocols { log_transfer, state_transfer } => {
+            TransferPhase::RunningTransferProtocols {
+                log_transfer,
+                state_transfer,
+            } => {
                 match state_transfer {
                     StateTransferState::Idle => {
                         unreachable!("Received result of the state transfer while not running it?")
