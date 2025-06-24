@@ -146,7 +146,7 @@ where
                                      inner_replica.view());
 
         let mut replica = Self {
-            p: Default::default(),
+            p: PhantomData::default(),
             inner_replica,
         };
 
