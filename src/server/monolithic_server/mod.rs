@@ -1,8 +1,8 @@
-use tracing::error;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::error;
 
 use atlas_common::error::*;
 use atlas_core::ordering_protocol::loggable::LoggableOrderProtocol;
@@ -164,8 +164,11 @@ where
 
         loop {
             if let Err(err) = self.inner_replica.iterate() {
-                error!("Error while executing replica {}, slowing execution for 1sec", err);
-                
+                error!(
+                    "Error while executing replica {}, slowing execution for 1sec",
+                    err
+                );
+
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
 

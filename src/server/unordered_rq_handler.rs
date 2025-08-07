@@ -12,11 +12,10 @@ pub(super) fn start_unordered_rq_thread<O: ApplicationData>(
     unordered_rqs: UnorderedRqHandles<SMRReq<O>>,
     executor_handle: impl DecisionExecutorHandle<SMRReq<O>> + Send,
 ) -> Result<()> {
-    
     std::thread::Builder::new()
         .name("Unordered-RQ-Passer".to_string())
         .spawn(move || unordered_rq_thread::<O>(unordered_rqs, executor_handle))?;
-    
+
     Ok(())
 }
 

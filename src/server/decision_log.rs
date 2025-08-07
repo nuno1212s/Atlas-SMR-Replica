@@ -213,9 +213,9 @@ where
         LT: LogTransferProtocolInitializer<SMRRawReq<R>, OP, DL, PL, WrappedExecHandle<R>, NT>,
     {
         let (dl_config, lt_config) = configs;
-        
+
         let node_id = node.id();
-        
+
         let (dl_work_tx, dl_work_rx) =
             channel::sync::new_bounded_sync(CHANNEL_SIZE, Some("Decision Log Work Channel"));
 
@@ -262,7 +262,10 @@ where
 
                 loop {
                     if let Err(err) = decision_log_manager.run() {
-                        error!("{:?} Ran into error while running the decision log {:?}", node_id, err);
+                        error!(
+                            "{:?} Ran into error while running the decision log {:?}",
+                            node_id, err
+                        );
                     }
                 }
             })
